@@ -10,7 +10,7 @@ type Log = {
 type Plant = {
   id: string; name: string; strain: string; type: "Photoperiod" | "Autoflower";
   medium: string; setting: "Indoor" | "Outdoor" | "Greenhouse"; started: string;
-  stage: Stage; stageStarted: string; cover?: string; logs: Log[]; yieldG?: string;
+  stage: Stage; stageStarted: string; cover?: string | undefined; logs: Log[]; yieldG?: string;
 };
 
 const STAGES: Stage[] = ["Germination", "Seedling", "Vegetative", "Flowering", "Drying", "Curing", "Harvested"];
