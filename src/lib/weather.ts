@@ -4,14 +4,14 @@ export type Alert = { id: string; severity: Severity; title: string; detail: str
 export type Forecast = {
   current: { temperature_2m: number; relative_humidity_2m: number; wind_speed_10m: number; weather_code: number };
   hourly: {
-    time: string[] & Record<number, string>;
-    temperature_2m: number[] & Record<number, number>;
-    relative_humidity_2m: number[] & Record<number, number>;
-    wind_gusts_10m: number[] & Record<number, number>;
-    precipitation: number[] & Record<number, number>;
-    uv_index: number[] & Record<number, number>;
+    time: string[];
+    temperature_2m: number[];
+    relative_humidity_2m: number[];
+    wind_gusts_10m: number[];
+    precipitation: number[];
+    uv_index: number[];
   };
-  daily: { time: string[] & Record<number, string>; temperature_2m_max: number[] & Record<number, number>; temperature_2m_min: number[] & Record<number, number>; precipitation_sum: number[] & Record<number, number> };
+  daily: { time: string[]; temperature_2m_max: number[]; temperature_2m_min: number[]; precipitation_sum: number[] };
 };
 
 export async function fetchForecast(lat: number, lon: number): Promise<Forecast> {
@@ -38,28 +38,28 @@ export function buildAlerts(f: Forecast): Alert[] {
     return -1;
   };
 
-  let i = first((k) => h.temperature_2m[k] <= 2);
+  let i = first((k) => h.temperature_2m[k]! <= 2);
   if (i >= 0)
-    alerts.push({ id: "frost", severity: "danger", title: "Frost risk", when: fmt(h.time[i]),
-      detail: `Down to ${h.temperature_2m[i]}°C. Bring plants inside or cover them overnight.` });
-  else if ((i = first((k) => h.temperature_2m[k] < 10)) >= 0)
-    alerts.push({ id: "cold", severity: "warning", title: "Cold stress", when: fmt(h.time[i]),
-      detail: `${h.temperature_2m[i]}°C expected. Growth slows below 10°C; protect roots and seedlings.` });
+    alerts.push({ id: "frost", severity: "danger", title: "Frost risk", when: fmt(h.time[i]!),
+      detail: `Down to ${h.temperature_2m[i]!}°C. Bring plants inside or cover them overnight.` });
+  else if ((i = first((k) => h.temperature_2m[k]! < 10)) >= 0)
+    alerts.push({ id: "cold", severity: "warning", title: "Cold stress", when: fmt(h.time[i]!),
+      detail: `${h.temperature_2m[i]!}°C expected. Growth slows below 10°C; protect roots and seedlings.` });
 
-  if ((i = first((k) => h.temperature_2m[k] >= 32)) >= 0)
-    alerts.push({ id: "heat", severity: h.temperature_2m[i] >= 36 ? "danger" : "warning", title: "Heat stress",
-      when: fmt(h.time[i]), detail: `${h.temperature_2m[i]}°C expected. Water early, add shade cloth.` });
+  if ((i = first((k) => h.temperature_2m[k]! >= 32)) >= 0)
+    alerts.push({ id: "heat", severity: h.temperature_2m[i]! >= 36 ? "danger" : "warning", title: "Heat stress",
+      when: fmt(h.time[i]!), detail: `${h.temperature_2m[i]!}°C expected. Water early, add shade cloth.` });
 
-  if ((i = first((k) => h.wind_gusts_10m[k] >= 50)) >= 0)
-    alerts.push({ id: "wind", severity: h.wind_gusts_10m[i] >= 75 ? "danger" : "warning", title: "Strong wind gusts",
-      when: fmt(h.time[i]), detail: `Gusts to ${Math.round(h.wind_gusts_10m[i])} km/h. Stake or tie down branches.` });
+  if ((i = first((k) => h.wind_gusts_10m[k]! >= 50)) >= 0)
+    alerts.push({ id: "wind", severity: h.wind_gusts_10m[i]! >= 75 ? "danger" : "warning", title: "Strong wind gusts",
+      when: fmt(h.time[i]!), detail: `Gusts to ${Math.round(h.wind_gusts_10m[i]!)} km/h. Stake or tie down branches.` });
 
   // sustained humidity: 6+ consecutive hours above 85%
   let run = 0;
   for (let k = 0; k < n; k++) {
-    run = h.relative_humidity_2m[k] >= 85 ? run + 1 : 0;
+    run = h.relative_humidity_2m[k]! >= 85 ? run + 1 : 0;
     if (run === 6) {
-      alerts.push({ id: "mould", severity: "warning", title: "Bud rot / mould risk", when: fmt(h.time[k - 5]),
+      alerts.push({ id: "mould", severity: "warning", title: "Bud rot / mould risk", when: fmt(h.time[k - 5]!),
         detail: "Humidity above 85% for 6+ hours. Improve airflow, check dense colas." });
       break;
     }
@@ -68,13 +68,13 @@ export function buildAlerts(f: Forecast): Alert[] {
   f.daily.precipitation_sum.slice(0, 2).forEach((mm, d) => {
     if (mm >= 15)
       alerts.push({ id: `rain${d}`, severity: mm >= 30 ? "danger" : "warning", title: "Heavy rain",
-        when: new Date(f.daily.time[d]).toLocaleDateString(undefined, { weekday: "long" }),
+        when: new Date(f.daily.time[d]!).toLocaleDateString(undefined, { weekday: "long" }),
         detail: `${mm} mm expected. Check drainage, skip watering, cover flowering plants.` });
   });
 
-  if ((i = first((k) => h.uv_index[k] >= 9)) >= 0)
-    alerts.push({ id: "uv", severity: "info", title: "Extreme UV", when: fmt(h.time[i]),
-      detail: `UV index ${h.uv_index[i]}. Watch for leaf bleaching on young plants.` });
+  if ((i = first((k) => h.uv_index[k]! >= 9)) >= 0)
+    alerts.push({ id: "uv", severity: "info", title: "Extreme UV", when: fmt(h.time[i]!),
+      detail: `UV index ${h.uv_index[i]!}. Watch for leaf bleaching on young plants.` });
 
   return alerts;
 }
