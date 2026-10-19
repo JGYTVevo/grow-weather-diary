@@ -4,14 +4,14 @@ export type Alert = { id: string; severity: Severity; title: string; detail: str
 export type Forecast = {
   current: { temperature_2m: number; relative_humidity_2m: number; wind_speed_10m: number; weather_code: number };
   hourly: {
-    time: string[];
-    temperature_2m: number[];
-    relative_humidity_2m: number[];
-    wind_gusts_10m: number[];
-    precipitation: number[];
-    uv_index: number[];
+    time: string[] & Record<number, string>;
+    temperature_2m: number[] & Record<number, number>;
+    relative_humidity_2m: number[] & Record<number, number>;
+    wind_gusts_10m: number[] & Record<number, number>;
+    precipitation: number[] & Record<number, number>;
+    uv_index: number[] & Record<number, number>;
   };
-  daily: { time: string[]; temperature_2m_max: number[]; temperature_2m_min: number[]; precipitation_sum: number[] };
+  daily: { time: string[] & Record<number, string>; temperature_2m_max: number[] & Record<number, number>; temperature_2m_min: number[] & Record<number, number>; precipitation_sum: number[] & Record<number, number> };
 };
 
 export async function fetchForecast(lat: number, lon: number): Promise<Forecast> {
