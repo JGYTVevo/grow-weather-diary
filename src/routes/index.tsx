@@ -84,7 +84,7 @@ function WeatherPanel() {
     const danger = alerts.filter((a) => a.severity === "danger");
     if (!danger.length || typeof Notification === "undefined") return;
     if (Notification.permission === "granted")
-      new Notification(`Canopy: ${danger[0].title}`, { body: danger[0].detail });
+      new Notification(`Canopy: ${danger[0]!.title}`, { body: danger[0]!.detail });
   }, [alerts]);
 
   const tone = { danger: "border-destructive bg-destructive/15", warning: "border-warning bg-warning/10", info: "border-info bg-info/10" };
@@ -138,7 +138,7 @@ function WeatherPanel() {
           {data.daily.time.map((d, i) => (
             <div key={d} className="rounded-2xl border bg-card p-3 text-center">
               <div className="text-xs text-muted-foreground">{new Date(d).toLocaleDateString(undefined, { weekday: "short" })}</div>
-              <div className="mt-1 font-semibold">{Math.round(data.daily.temperature_2m_max[i])}° / {Math.round(data.daily.temperature_2m_min[i])}°</div>
+              <div className="mt-1 font-semibold">{Math.round(data.daily.temperature_2m_max[i] ?? 0)}° / {Math.round(data.daily.temperature_2m_min[i] ?? 0)}°</div>
               <div className="text-xs text-info">{data.daily.precipitation_sum[i]} mm</div>
             </div>
           ))}
