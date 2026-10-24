@@ -36,6 +36,33 @@
 
 :root {
   --radius: 1rem;
+  /* Light theme botanical palette */
+  --background: oklch(0.985 0.008 140);
+  --foreground: oklch(0.18 0.035 150);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.035 150);
+  --primary: oklch(0.52 0.17 142);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.95 0.015 140);
+  --secondary-foreground: oklch(0.22 0.03 150);
+  --muted: oklch(0.94 0.012 140);
+  --muted-foreground: oklch(0.48 0.025 140);
+  --accent: oklch(0.72 0.14 75);
+  --accent-foreground: oklch(0.18 0.03 80);
+  --destructive: oklch(0.58 0.22 28);
+  --destructive-foreground: oklch(0.99 0 0);
+  --warning: oklch(0.72 0.16 75);
+  --warning-foreground: oklch(0.2 0.04 80);
+  --info: oklch(0.55 0.14 230);
+  --border: oklch(0.88 0.015 140);
+  --input: oklch(0.88 0.015 140);
+  --ring: oklch(0.52 0.17 142);
+  --gradient-hero:
+    radial-gradient(120% 90% at 0% 0%, oklch(0.92 0.06 140 / 0.5) 0%, transparent 60%),
+    radial-gradient(90% 80% at 100% 0%, oklch(0.94 0.06 80 / 0.4) 0%, transparent 55%);
+}
+
+.dark {
   --background: oklch(0.18 0.025 150);
   --foreground: oklch(0.95 0.02 110);
   --card: oklch(0.23 0.03 150);
@@ -65,18 +92,71 @@
   * {
     border-color: var(--color-border);
   }
+  html {
+    transition: color-scheme 200ms ease;
+  }
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
+    transition:
+      background-color 200ms ease,
+      color 200ms ease;
   }
   h1,
   h2,
   h3 {
     font-family: var(--font-display);
   }
+  /* Smooth theme & layout transitions across dashboard containers */
+  .bg-card,
+  .bg-secondary,
+  .border-border,
+  nav,
+  header {
+    transition:
+      background-color 200ms ease,
+      border-color 200ms ease,
+      color 200ms ease,
+      box-shadow 200ms ease;
+  }
 }
 
 @utility bg-hero {
   background-image: var(--gradient-hero);
+}
+
+/* Dashboard card smooth interaction and elevation transitions */
+.dashboard-card-interactive {
+  transition:
+    transform 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 200ms ease;
+}
+.dashboard-card-interactive:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 10px 25px -5px rgba(0, 0, 0, 0.08),
+    0 8px 10px -6px rgba(0, 0, 0, 0.04);
+}
+.dark .dashboard-card-interactive:hover {
+  box-shadow:
+    0 10px 25px -5px rgba(0, 0, 0, 0.35),
+    0 8px 10px -6px rgba(0, 0, 0, 0.2);
+}
+
+/* Smooth tab view content fade-in */
+.tab-content-enter {
+  animation: tabFadeIn 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes tabFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

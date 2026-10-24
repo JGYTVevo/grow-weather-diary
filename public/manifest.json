@@ -1,14 +1,14 @@
 {
   "id": "/",
-  "name": "Canopy Grow Diary & Weather Alerts",
+  "name": "Canopy — Grow Diary & Weather Alerts",
   "short_name": "Canopy",
   "description": "Track your plants and get local weather warnings for frost, heat, wind and mould risk.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait-primary",
-  "background_color": "#1b2e23",
-  "theme_color": "#1b2e23",
+  "theme_color": "#142618",
+  "background_color": "#0a150d",
   "icons": [
     {
       "src": "/pwa-192x192.png",
@@ -27,6 +27,12 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
     }
   ]
 }

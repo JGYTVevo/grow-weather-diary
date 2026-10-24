@@ -1,22 +1,25 @@
-import { Cloud, CloudUpload, LogIn } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
-
-import { useAuth } from "@/contexts/AuthContext";
+import { db, handleFirestoreError, OperationType, type FirebaseUser } from "@/lib/firebase";
+import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
 import {
-  deletePlantFromFirestore,
-  deletePlantLogFromFirestore,
-  LOCAL_STORAGE_KEY,
-  migrateLocalGrowsToCloud,
-  savePlantLogToFirestore,
-  savePlantToFirestore,
-  subscribePlantLogs,
-  subscribeUserPlants,
-  type Log,
-  type LogType,
-  type Plant,
-  type Stage,
-} from "@/lib/grows-service";
+  Cloud,
+  CloudCheck,
+  Sparkles,
+  Plus,
+  AlertCircle,
+  Stethoscope,
+  ArrowRight,
+  Check,
+  Compass,
+  Scissors,
+  SlidersHorizontal,
+  Microscope,
+} from "lucide-react";
+import { usePlants } from "@/hooks/use-plants";
+import { GrowthMetricsChart } from "@/components/GrowthMetricsChart";
+
+export type { Stage, LogType, Log, Plant } from "@/hooks/use-plants";
+import type { Stage, LogType, Log, Plant } from "@/hooks/use-plants";
 
 const STAGES: Stage[] = [
   "Germination",
@@ -27,7 +30,6 @@ const STAGES: Stage[] = [
   "Curing",
   "Harvested",
 ];
-
 const LOGS: Record<LogType, { icon: string; label: string }> = {
   water: { icon: "💧", label: "Water" },
   feed: { icon: "🧪", label: "Feed" },
@@ -36,7 +38,6 @@ const LOGS: Record<LogType, { icon: string; label: string }> = {
   photo: { icon: "📷", label: "Photo" },
   note: { icon: "📝", label: "Note" },
 };
-
 const TECHNIQUES = [
   "LST",
   "Topping",
@@ -47,12 +48,15 @@ const TECHNIQUES = [
   "Supercropping",
   "Transplant",
 ];
-
+const KEY = "canopy-plants-v2";
 const uid = () => Math.random().toString(36).slice(2, 10);
-const today = () => new Date().toISOString().slice(0, 10);
-const days = (d: string) =>
-  Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 86400000));
-const weekDay = (d: string) => {
+const days = (d?: string | null) => {
+  if (!d) return 0;
+  const t = new Date(d).getTime();
+  if (isNaN(t)) return 0;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+};
+const weekDay = (d?: string | null) => {
   const n = days(d);
   return `Week ${Math.floor(n / 7) + 1} · Day ${(n % 7) + 1}`;
 };
@@ -67,215 +71,253 @@ function compress(file: File): Promise<string> {
   return new Promise((res) => {
     const img = new Image();
     img.onload = () => {
-      const s = Math.min(1, 600 / Math.max(img.width, img.height));
+      const s = Math.min(1, 720 / Math.max(img.width, img.height));
       const c = document.createElement("canvas");
       c.width = img.width * s;
       c.height = img.height * s;
       c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
-      res(c.toDataURL("image/jpeg", 0.65));
+      res(c.toDataURL("image/jpeg", 0.7));
     };
     img.src = URL.createObjectURL(file);
   });
 }
 
 function PhotoPick({ onPick, label }: { onPick: (d: string) => void; label: string }) {
-  const ref = useRef<HTMLInputElement>(null);
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => ref.current?.click()}
-        className="rounded-xl border border-dashed px-3 py-2.5 text-sm text-muted-foreground transition hover:border-primary/50"
+    <div className="inline-flex items-center gap-2">
+      <label className="rounded-xl border border-dashed px-3 py-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer inline-flex items-center gap-1.5 active:scale-95 transition">
+        <span>{label}</span>
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,.jpg,.jpeg,.png,.webp,.heic,application/octet-stream"
+          className="sr-only"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (f) onPick(await compress(f));
+            e.target.value = "";
+          }}
+        />
+      </label>
+      <label
+        title="Take photo with camera"
+        className="rounded-xl border border-primary/30 bg-primary/10 px-2.5 py-2 text-xs font-medium text-primary hover:bg-primary/20 cursor-pointer inline-flex items-center gap-1 active:scale-95 transition"
       >
-        {label}
-      </button>
-      <input
-        ref={ref}
-        type="file"
-        accept="image/*"
-        hidden
-        onChange={async (e) => {
-          const f = e.target.files?.[0];
-          if (f) onPick(await compress(f));
-        }}
-      />
-    </>
+        <span>📷 Camera</span>
+        <input
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="sr-only"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (f) onPick(await compress(f));
+            e.target.value = "";
+          }}
+        />
+      </label>
+    </div>
   );
 }
 
-export function PlantsPanel() {
-  const { user, signInWithGoogle } = useAuth();
-  const [plants, setPlants] = useState<Plant[]>([]);
-  const [localBackupCount, setLocalBackupCount] = useState(0);
-  const [loaded, setLoaded] = useState(false);
-  const [openId, setOpenId] = useState<string | null>(null);
+export interface PlantsPanelProps {
+  currentUser?: FirebaseUser | null;
+  onOpenAccount?: () => void;
+  externalLog?: {
+    type: LogType;
+    note: string;
+    photo?: string;
+    temp?: string;
+    humidity?: string;
+  } | null;
+  onClearExternalLog?: () => void;
+  plantsState?: ReturnType<typeof usePlants>;
+  onOpenDoctorForPlant?: (plantId: string) => void;
+  onOpenAdviceForPlant?: (
+    plantId: string,
+    initialTool?: "advice" | "trichome" | "defoliation" | "lst",
+  ) => void;
+  openedPlantId?: string | null;
+  onClosePlant?: () => void;
+}
+
+export function PlantsPanel({
+  currentUser,
+  onOpenAccount,
+  externalLog,
+  onClearExternalLog,
+  plantsState: externalPlantsState,
+  onOpenDoctorForPlant,
+  onOpenAdviceForPlant,
+  openedPlantId = null,
+  onClosePlant,
+}: PlantsPanelProps = {}) {
+  const internalPlantsState = usePlants(currentUser);
+  const { plants, updatePlant, createPlant, deletePlant, addLogToPlants } =
+    externalPlantsState || internalPlantsState;
+
+  const [openId, setOpenId] = useState<string | null>(openedPlantId);
   const [adding, setAdding] = useState(false);
-  const [migrating, setMigrating] = useState(false);
+  const [selectedExternalPlantIds, setSelectedExternalPlantIds] = useState<string[]>([]);
 
-  // Check for local storage plants available for cloud backup
   useEffect(() => {
-    try {
-      const local = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || "[]") as Plant[];
-      setLocalBackupCount(local.length);
-      if (!user) {
-        setPlants(local);
-        setLoaded(true);
-      }
-    } catch {
-      /* ignore */
+    if (openedPlantId !== undefined) {
+      setOpenId(openedPlantId);
     }
-  }, [user]);
+  }, [openedPlantId]);
 
-  // Subscribe to real-time Firestore when logged in
+  const active = plants.filter((p) => p.stage !== "Harvested");
+
+  // Keep selectedExternalPlantIds up to date with active plants
   useEffect(() => {
-    if (!user) return;
-    setLoaded(false);
-    const unsubscribe = subscribeUserPlants(user.uid, (cloudPlants) => {
-      setPlants(cloudPlants);
-      setLoaded(true);
-    });
-    return () => unsubscribe();
-  }, [user]);
-
-  // Save guest plants to localStorage
-  useEffect(() => {
-    if (user || !loaded) return;
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(plants));
-    } catch {
-      toast.error("Local storage full — remove some photos.");
+    if (externalLog && active.length > 0 && selectedExternalPlantIds.length === 0) {
+      setSelectedExternalPlantIds(active.map((p) => p.id));
     }
-  }, [plants, loaded, user]);
+  }, [externalLog, active]);
 
-  const handleCreatePlant = async (p: Plant) => {
-    if (user) {
-      try {
-        await savePlantToFirestore(user.uid, p);
-        toast.success(`"${p.name}" saved to your account!`);
-      } catch (err) {
-        console.error("Save plant error", err);
-        toast.error("Could not save plant to cloud.");
-        return;
-      }
-    } else {
-      setPlants((ps) => [p, ...ps]);
-      toast.success(`"${p.name}" saved locally. Sign in to sync across devices!`);
-    }
+  const handleSaveNew = async (p: Plant) => {
+    await createPlant(p);
     setAdding(false);
   };
 
-  const handleUpdatePlant = async (id: string, fn: (p: Plant) => Plant) => {
-    const existing = plants.find((p) => p.id === id);
-    if (!existing) return;
-    const updated = fn(existing);
-
-    if (user) {
-      try {
-        await savePlantToFirestore(user.uid, updated);
-      } catch (err) {
-        console.error("Update plant error", err);
-        toast.error("Could not update plant.");
-      }
-    } else {
-      setPlants((ps) => ps.map((p) => (p.id === id ? updated : p)));
-    }
-  };
-
-  const handleDeletePlant = async (id: string, name: string) => {
-    if (user) {
-      try {
-        await deletePlantFromFirestore(user.uid, id);
-        toast.success(`"${name}" deleted from your account`);
-      } catch (err) {
-        console.error("Delete plant error", err);
-        toast.error("Failed to delete plant.");
-      }
-    } else {
-      setPlants((ps) => ps.filter((p) => p.id !== id));
-      toast.success(`"${name}" deleted`);
-    }
+  const handleDelete = async (id: string) => {
+    await deletePlant(id);
     setOpenId(null);
+    onClosePlant?.();
   };
 
-  const handleMigrate = async () => {
-    if (!user) return;
-    try {
-      setMigrating(true);
-      const local = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || "[]") as Plant[];
-      const count = await migrateLocalGrowsToCloud(user.uid, local);
-      localStorage.removeItem(LOCAL_STORAGE_KEY);
-      setLocalBackupCount(0);
-      toast.success(`Successfully migrated ${count} local grow(s) to your account!`);
-    } catch (err) {
-      console.error("Migration error", err);
-      toast.error("Migration failed. Please try again.");
-    } finally {
-      setMigrating(false);
-    }
+  const attachExternalLogToPlants = async (plantIds: string[]) => {
+    if (!externalLog || plantIds.length === 0) return;
+    await addLogToPlants(plantIds, {
+      type: externalLog.type,
+      note: externalLog.note,
+      photo: externalLog.photo,
+      temp: externalLog.temp,
+      humidity: externalLog.humidity,
+      date: today(),
+    });
+    onClearExternalLog?.();
   };
 
   const open = plants.find((p) => p.id === openId);
 
-  if (open) {
+  if (open)
     return (
       <PlantView
         plant={open}
-        userId={user?.uid}
-        back={() => setOpenId(null)}
-        onChange={(fn) => handleUpdatePlant(open.id, fn)}
-        onDelete={() => handleDeletePlant(open.id, open.name)}
+        allPlants={plants}
+        back={() => {
+          setOpenId(null);
+          onClosePlant?.();
+        }}
+        onChange={(fn) => updatePlant(open.id, fn)}
+        onDelete={() => {
+          if (confirm(`Delete ${open.name}?`)) {
+            handleDelete(open.id);
+          }
+        }}
+        onOpenDoctor={onOpenDoctorForPlant}
+        onOpenAdvice={onOpenAdviceForPlant}
       />
     );
-  }
-
-  const active = plants.filter((p) => p.stage !== "Harvested");
 
   return (
     <div className="space-y-4">
-      {/* Account & Sync Status Banner */}
-      {user ? (
-        <div className="flex items-center justify-between rounded-2xl border border-primary/30 bg-primary/10 px-4 py-2.5 text-xs">
-          <div className="flex items-center gap-2 text-primary font-medium">
-            <Cloud className="h-4 w-4" />
-            <span>Connected as {user.displayName || user.email} (Cloud Synced)</span>
-          </div>
-          {localBackupCount > 0 && (
-            <button
-              onClick={handleMigrate}
-              disabled={migrating}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground transition hover:opacity-90"
-            >
-              <CloudUpload className="h-3 w-3" />
-              <span>{migrating ? "Backing up…" : `Backup ${localBackupCount} local grow(s)`}</span>
-            </button>
+      {/* Cloud Sync Status Header Bar */}
+      <div className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-2.5">
+        <div className="flex items-center gap-2 text-xs">
+          <Cloud className={`h-4 w-4 ${currentUser ? "text-primary" : "text-muted-foreground"}`} />
+          {currentUser ? (
+            <span className="text-foreground">
+              Cloud Sync:{" "}
+              <strong className="text-primary font-medium">
+                {currentUser.displayName || currentUser.email}
+              </strong>
+            </span>
+          ) : (
+            <span className="text-muted-foreground">Local storage only (single device)</span>
           )}
         </div>
-      ) : (
-        <div className="rounded-2xl border border-primary/30 bg-card p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="font-semibold text-foreground">Save your grows in the cloud</p>
-              <p className="text-xs text-muted-foreground">
-                Sign in with Google to save journals, sync across devices, and prevent data loss.
-              </p>
-            </div>
+        <button
+          onClick={onOpenAccount}
+          className="text-xs font-semibold text-primary hover:underline"
+        >
+          {currentUser ? "Manage" : "Sign In to Sync"}
+        </button>
+      </div>
+
+      {/* External Log Multi-Plant Attachment Banner */}
+      {externalLog && active.length > 0 && (
+        <div className="rounded-2xl border border-primary/40 bg-primary/10 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+              <Sparkles className="h-4 w-4 text-primary" />
+              <span>Attach incoming note to diary:</span>
+            </span>
             <button
-              onClick={signInWithGoogle}
-              className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground shadow transition hover:opacity-90"
+              onClick={onClearExternalLog}
+              className="text-xs text-muted-foreground hover:text-foreground underline"
             >
-              <LogIn className="h-3.5 w-3.5" />
-              <span>Sign in with Google</span>
+              Dismiss
             </button>
+          </div>
+          <p className="text-xs text-muted-foreground line-clamp-2 bg-secondary/50 p-2.5 rounded-xl border border-border/50">
+            {externalLog.note}
+          </p>
+
+          <div className="space-y-2">
+            <p className="text-[11px] text-muted-foreground font-medium">Select target plants:</p>
+            <div className="flex flex-wrap gap-2">
+              {active.map((p) => {
+                const isSelected = selectedExternalPlantIds.includes(p.id);
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedExternalPlantIds((prev) =>
+                        prev.includes(p.id) ? prev.filter((id) => id !== p.id) : [...prev, p.id],
+                      );
+                    }}
+                    className={`rounded-lg px-2.5 py-1.5 text-xs font-medium border transition flex items-center gap-1.5 ${
+                      isSelected
+                        ? "border-primary bg-primary/20 text-primary font-semibold ring-1 ring-primary"
+                        : "border-border bg-secondary/50 text-muted-foreground hover:bg-secondary"
+                    }`}
+                  >
+                    <span>{isSelected ? "✓" : "+"}</span>
+                    <span>{p.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                onClick={() => attachExternalLogToPlants(selectedExternalPlantIds)}
+                disabled={selectedExternalPlantIds.length === 0}
+                className="rounded-xl bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition disabled:opacity-50"
+              >
+                Save to Selected ({selectedExternalPlantIds.length})
+              </button>
+              {active.length > 1 && (
+                <button
+                  onClick={() => attachExternalLogToPlants(active.map((p) => p.id))}
+                  className="rounded-xl border border-border bg-secondary px-3.5 py-2 text-xs font-semibold text-foreground hover:bg-secondary/80 transition"
+                >
+                  Save to All {active.length} Active Plants
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Summary Stats */}
+      {/* Stats Summary */}
       <div className="grid grid-cols-3 gap-2">
         {[
           ["Active", active.length],
           ["Harvested", plants.length - active.length],
-          ["Grows", plants.length],
+          ["Logs", plants.reduce((n, p) => n + p.logs.length, 0)],
         ].map(([l, v]) => (
           <div key={l} className="rounded-2xl border bg-card p-3 text-center">
             <div className="font-display text-2xl">{v}</div>
@@ -284,6 +326,9 @@ export function PlantsPanel() {
         ))}
       </div>
 
+      {/* 30-Day Growth Rate & Health Metrics Recharts Line Graph */}
+      <GrowthMetricsChart plants={plants} />
+
       <div className="flex items-center justify-between">
         <h2 className="text-2xl">My grows</h2>
         <button className={btn} onClick={() => setAdding(!adding)}>
@@ -291,20 +336,19 @@ export function PlantsPanel() {
         </button>
       </div>
 
-      {adding && <NewPlant onSave={handleCreatePlant} />}
+      {adding && <NewPlant onSave={handleSaveNew} />}
 
       {plants.length === 0 && !adding && (
         <p className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
-          {loaded ? "Start your first grow journal." : "Loading your grows…"}
+          Start your first grow journal.
         </p>
       )}
-
       <div className="grid grid-cols-2 gap-3">
         {plants.map((p) => (
           <button
             key={p.id}
             onClick={() => setOpenId(p.id)}
-            className="group overflow-hidden rounded-2xl border bg-card text-left transition hover:border-primary/50"
+            className="overflow-hidden rounded-2xl border bg-card text-left"
           >
             <div className="flex aspect-square items-center justify-center bg-secondary text-4xl">
               {p.cover ? (
@@ -342,14 +386,12 @@ function NewPlant({ onSave }: { onSave: (p: Plant) => void }) {
     started: today(),
     cover: "",
   });
-
   return (
     <form
       className="space-y-3 rounded-2xl border bg-card p-4"
       onSubmit={(e) => {
         e.preventDefault();
         if (!f.name.trim()) return;
-        const now = new Date().toISOString();
         onSave({
           id: uid(),
           ...f,
@@ -357,8 +399,6 @@ function NewPlant({ onSave }: { onSave: (p: Plant) => void }) {
           stage: "Germination",
           stageStarted: f.started,
           logs: [],
-          createdAt: now,
-          updatedAt: now,
         });
       }}
     >
@@ -433,83 +473,37 @@ function NewPlant({ onSave }: { onSave: (p: Plant) => void }) {
 
 function PlantView({
   plant: p,
-  userId,
+  allPlants = [],
   back,
   onChange,
   onDelete,
+  onOpenDoctor,
+  onOpenAdvice,
 }: {
   plant: Plant;
-  userId?: string;
+  allPlants?: Plant[];
   back: () => void;
   onChange: (fn: (p: Plant) => Plant) => void;
   onDelete: () => void;
+  onOpenDoctor?: (plantId: string) => void;
+  onOpenAdvice?: (
+    plantId: string,
+    initialTool?: "advice" | "trichome" | "defoliation" | "lst",
+  ) => void;
 }) {
-  const [logs, setLogs] = useState<Log[]>(p.logs || []);
   const [logType, setLogType] = useState<LogType | null>(null);
   const [view, setView] = useState<"timeline" | "gallery">("timeline");
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const stageIdx = STAGES.indexOf(p.stage);
-
-  // Subscribe to real-time logs from Firestore if user is signed in
-  useEffect(() => {
-    if (!userId) {
-      setLogs(p.logs || []);
-      return;
-    }
-    const unsubscribe = subscribePlantLogs(userId, p.id, (cloudLogs) => {
-      setLogs(cloudLogs);
-    });
-    return () => unsubscribe();
-  }, [userId, p.id, p.logs]);
-
-  const lastWater = logs.find((l) => l.type === "water" || l.type === "feed");
-  const photos = logs.filter((l) => l.photo);
-  const latestHeight = logs.find((l) => l.height)?.height;
-
-  const handleSaveLog = async (newLog: Log) => {
-    if (userId) {
-      try {
-        await savePlantLogToFirestore(userId, p.id, newLog);
-        toast.success("Log entry saved!");
-      } catch (err) {
-        console.error("Save log error", err);
-        toast.error("Could not save log entry.");
-      }
-    } else {
-      const updatedLogs = [newLog, ...logs].sort((a, b) => b.date.localeCompare(a.date));
-      setLogs(updatedLogs);
-      onChange((x) => ({ ...x, logs: updatedLogs }));
-      toast.success("Log saved locally");
-    }
-    setLogType(null);
-  };
-
-  const handleDeleteLog = async (logId: string) => {
-    if (userId) {
-      try {
-        await deletePlantLogFromFirestore(userId, p.id, logId);
-        toast.success("Log entry removed");
-      } catch (err) {
-        console.error("Delete log error", err);
-        toast.error("Failed to delete log.");
-      }
-    } else {
-      const updatedLogs = logs.filter((y) => y.id !== logId);
-      setLogs(updatedLogs);
-      onChange((x) => ({ ...x, logs: updatedLogs }));
-      toast.success("Log removed");
-    }
-  };
+  const plantLogs = p.logs || [];
+  const lastWater = plantLogs.find((l) => l.type === "water" || l.type === "feed");
+  const photos = plantLogs.filter((l) => l.photo);
+  const latestHeight = plantLogs.find((l) => l.height)?.height;
 
   return (
     <div className="space-y-4">
-      <button
-        onClick={back}
-        className="text-sm font-semibold text-primary transition hover:underline"
-      >
+      <button onClick={back} className="text-sm text-primary">
         ← All plants
       </button>
-
       <div className="overflow-hidden rounded-2xl border bg-card">
         <div className="relative flex aspect-video items-center justify-center bg-secondary text-6xl">
           {p.cover ? (
@@ -518,23 +512,12 @@ function PlantView({
             "🌱"
           )}
           <div className="absolute bottom-2 right-2">
-            <PhotoPick
-              label="📷 Change cover"
-              onPick={(cover) => onChange((x) => ({ ...x, cover }))}
-            />
+            <PhotoPick label="📷" onPick={(cover) => onChange((x) => ({ ...x, cover }))} />
           </div>
         </div>
         <div className="p-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-3xl font-semibold">{p.name}</h2>
-            {userId && (
-              <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-semibold text-primary">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                Cloud Saved
-              </span>
-            )}
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <h2 className="text-3xl">{p.name}</h2>
+          <p className="text-sm text-muted-foreground">
             {p.strain || "Unknown strain"} · {p.type} · {p.setting} · {p.medium}
           </p>
           <div className="mt-3 grid grid-cols-3 gap-2 text-center">
@@ -551,7 +534,7 @@ function PlantView({
       </div>
 
       <section className="rounded-2xl border bg-card p-4">
-        <h3 className="mb-3 text-lg font-medium">Growth stage</h3>
+        <h3 className="mb-3 text-lg">Growth stage</h3>
         <div className="flex gap-1">
           {STAGES.map((s, i) => (
             <div
@@ -581,21 +564,158 @@ function PlantView({
         )}
       </section>
 
+      {/* 30-Day Growth & Health Metrics for this Plant */}
+      <GrowthMetricsChart plants={allPlants.length > 0 ? allPlants : [p]} openedPlantId={p.id} />
+
+      {/* Direct AI Tools: Health Doctor & Grow Advice for this plant */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {onOpenDoctor && (
+          <div className="rounded-2xl border border-primary/40 bg-primary/10 p-4 flex flex-col justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow">
+                <Stethoscope className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">AI Health Doctor</p>
+                <p className="text-xs text-muted-foreground">
+                  Check foliage for pests, burns, or deficiencies
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenDoctor(p.id)}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition shadow-sm active:scale-95"
+            >
+              <span>Scan Health</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        {onOpenAdvice && (
+          <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4 flex flex-col justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow">
+                <Compass className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">AI Grow Coach & Advice</p>
+                <p className="text-xs text-muted-foreground">
+                  Topping, LST training, feed & water timing
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenAdvice(p.id, "advice")}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 transition shadow-sm active:scale-95"
+            >
+              <span>Get Grow Advice</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        {onOpenAdvice && (
+          <div className="rounded-2xl border border-teal-500/40 bg-teal-500/10 p-4 flex flex-col justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-teal-600 text-white shadow">
+                <Scissors className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">Defoliation & Schwazzing</p>
+                <p className="text-xs text-muted-foreground">
+                  Canopy density, lower popcorn lollipopping & airflow
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenAdvice(p.id, "defoliation")}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-teal-600 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-700 transition shadow-sm active:scale-95"
+            >
+              <span>Analyze Canopy</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        {onOpenAdvice && (
+          <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 flex flex-col justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-600 text-white shadow">
+                <SlidersHorizontal className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">LST Before & After Slider</p>
+                <p className="text-xs text-muted-foreground">
+                  Inspect branch leveling & canopy spread interactively
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenAdvice(p.id, "lst")}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-600 px-4 py-2 text-xs font-semibold text-white hover:bg-amber-700 transition shadow-sm active:scale-95"
+            >
+              <span>Compare Training</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        {onOpenAdvice && (
+          <div className="rounded-2xl border border-amber-600/40 bg-amber-600/10 p-4 flex flex-col justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-700 text-white shadow">
+                <Microscope className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">Trichome Harvest Scanner</p>
+                <p className="text-xs text-muted-foreground">
+                  Gland head ratios (clear/cloudy/amber) & chop countdown
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenAdvice(p.id, "trichome")}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-700 px-4 py-2 text-xs font-semibold text-white hover:bg-amber-800 transition shadow-sm active:scale-95"
+            >
+              <span>Scan Trichomes</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+
       <section>
-        <h3 className="mb-2 text-lg font-medium">Add to journal</h3>
+        <h3 className="mb-2 text-lg">Add to journal</h3>
         <div className="grid grid-cols-3 gap-2">
           {(Object.keys(LOGS) as LogType[]).map((t) => (
             <button
               key={t}
               onClick={() => setLogType(logType === t ? null : t)}
-              className={`rounded-2xl border p-3 text-center transition hover:border-primary/40 ${logType === t ? "border-primary bg-primary/15" : "bg-card"}`}
+              className={`rounded-2xl border p-3 text-center ${logType === t ? "border-primary bg-primary/15" : "bg-card"}`}
             >
               <div className="text-2xl">{LOGS[t].icon}</div>
               <div className="text-xs">{LOGS[t].label}</div>
             </button>
           ))}
         </div>
-        {logType && <LogForm type={logType} onSave={handleSaveLog} />}
+        {logType && (
+          <LogForm
+            type={logType}
+            onSave={(l) => {
+              onChange((x) => ({
+                ...x,
+                logs: [l, ...(x.logs || [])].sort((a, b) => b.date.localeCompare(a.date)),
+              }));
+              setLogType(null);
+            }}
+          />
+        )}
       </section>
 
       <section>
@@ -608,26 +728,24 @@ function PlantView({
           </button>
         </div>
         {view === "gallery" ? (
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-3 gap-1">
             {photos.map((l) => (
               <img
                 key={l.id}
                 src={l.photo}
                 alt=""
-                className="aspect-square w-full rounded-xl object-cover"
+                className="aspect-square w-full rounded-lg object-cover"
               />
             ))}
             {!photos.length && (
-              <p className="col-span-3 rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground">
-                No photos logged yet.
-              </p>
+              <p className="col-span-3 text-sm text-muted-foreground">No photos yet.</p>
             )}
           </div>
         ) : (
           <ol className="relative space-y-3 border-l pl-4">
-            {logs.map((l) => (
+            {plantLogs.map((l) => (
               <li key={l.id} className="relative">
-                <span className="absolute -left-[1.6rem] top-1 flex h-6 w-6 items-center justify-center rounded-full bg-card text-xs shadow-sm">
+                <span className="absolute -left-[1.6rem] top-1 flex h-6 w-6 items-center justify-center rounded-full bg-card text-xs">
                   {LOGS[l.type].icon}
                 </span>
                 <div className="rounded-xl bg-card p-3 text-sm">
@@ -647,47 +765,28 @@ function PlantView({
                   {l.photo && <img src={l.photo} alt="" className="mt-2 w-full rounded-lg" />}
                   {l.note && <p className="mt-1">{l.note}</p>}
                   <button
-                    className="mt-2 text-xs text-muted-foreground transition hover:text-destructive"
-                    onClick={() => handleDeleteLog(l.id)}
+                    className="mt-1 text-xs text-muted-foreground"
+                    onClick={() =>
+                      onChange((x) => ({
+                        ...x,
+                        logs: (x.logs || []).filter((y) => y.id !== l.id),
+                      }))
+                    }
                   >
                     Remove
                   </button>
                 </div>
               </li>
             ))}
-            {!logs.length && (
-              <p className="rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground">
-                Nothing logged yet.
-              </p>
+            {!plantLogs.length && (
+              <p className="text-sm text-muted-foreground">Nothing logged yet.</p>
             )}
           </ol>
         )}
       </section>
-
-      {confirmDelete ? (
-        <div className="flex items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/10 p-3">
-          <span className="text-xs text-destructive">Delete {p.name}?</span>
-          <button
-            onClick={onDelete}
-            className="rounded-lg bg-destructive px-3 py-1 text-xs font-semibold text-destructive-foreground transition hover:opacity-90"
-          >
-            Confirm Delete
-          </button>
-          <button
-            onClick={() => setConfirmDelete(false)}
-            className="text-xs text-muted-foreground hover:underline"
-          >
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <button
-          onClick={() => setConfirmDelete(true)}
-          className="text-xs text-destructive transition hover:underline"
-        >
-          Delete plant
-        </button>
-      )}
+      <button onClick={onDelete} className="text-xs text-destructive">
+        Delete plant
+      </button>
     </div>
   );
 }
@@ -722,16 +821,9 @@ function Details({ l }: { l: Log }) {
 }
 
 function LogForm({ type, onSave }: { type: LogType; onSave: (l: Log) => void }) {
-  const [l, setL] = useState<Log>({
-    id: uid(),
-    date: today(),
-    type,
-    createdAt: new Date().toISOString(),
-  });
-
+  const [l, setL] = useState<Log>({ id: uid(), date: today(), type });
   const set = (k: keyof Log) => (e: { target: { value: string } }) =>
     setL({ ...l, [k]: e.target.value });
-
   return (
     <form
       className="mt-3 space-y-2 rounded-2xl border bg-card p-4"

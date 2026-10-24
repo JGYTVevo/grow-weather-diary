@@ -11,22 +11,14 @@ export function usePWAInstall() {
   const [isIOS, setIsIOS] = useState(false);
 
   useEffect(() => {
-    // Register service worker if supported
-    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch((err) => {
-        console.warn("ServiceWorker registration failed: ", err);
-      });
-    }
-
-    // Detect standalone mode (already installed on phone/desktop)
+    // Detect standalone mode (already installed on phone or desktop)
     const isStandalone =
-      typeof window !== "undefined" &&
-      (window.matchMedia("(display-mode: standalone)").matches ||
-        (window.navigator as unknown as { standalone?: boolean }).standalone === true);
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (window.navigator as unknown as { standalone?: boolean }).standalone === true;
     setIsInstalled(isStandalone);
 
     // Detect iOS devices
-    const userAgent = typeof window !== "undefined" ? window.navigator.userAgent.toLowerCase() : "";
+    const userAgent = window.navigator.userAgent.toLowerCase();
     const isIOSDevice = /iphone|ipad|ipod/.test(userAgent);
     setIsIOS(isIOSDevice);
 

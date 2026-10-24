@@ -1,6 +1,7 @@
 {
-  "name": "Canopy Grow Diary & Weather Alerts",
-  "description": "Track your plants and get local weather warnings for frost, heat, wind and mould risk.",
+  "name": "Canopy — Grow Diary & Weather Alerts",
+  "description": "Grow diary with cross-device sync, local weather alerts, and AI plant health doctor.",
   "permissions": [],
-  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

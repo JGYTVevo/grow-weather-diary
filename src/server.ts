@@ -47,6 +47,67 @@ function isH3SwallowedErrorBody(body: string): boolean {
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      const url = new URL(request.url);
+      if (url.pathname === "/api/diagnose-plant" && request.method === "POST") {
+        try {
+          const { handleDiagnosePlant } = await import("./server/diagnose");
+          const payload = await request.json();
+          const result = await handleDiagnosePlant(payload);
+          return Response.json(result);
+        } catch (err: unknown) {
+          console.error("SSR /api/diagnose-plant error:", err);
+          return Response.json(
+            { error: err instanceof Error ? err.message : String(err) },
+            { status: 500 },
+          );
+        }
+      }
+
+      if (url.pathname === "/api/advice-plant" && request.method === "POST") {
+        try {
+          const { handlePlantAdvice } = await import("./server/advice");
+          const payload = await request.json();
+          const result = await handlePlantAdvice(payload);
+          return Response.json(result);
+        } catch (err: unknown) {
+          console.error("SSR /api/advice-plant error:", err);
+          return Response.json(
+            { error: err instanceof Error ? err.message : String(err) },
+            { status: 500 },
+          );
+        }
+      }
+
+      if (url.pathname === "/api/defoliation-analyze" && request.method === "POST") {
+        try {
+          const { handleDefoliationAnalyze } = await import("./server/defoliation");
+          const payload = await request.json();
+          const result = await handleDefoliationAnalyze(payload);
+          return Response.json(result);
+        } catch (err: unknown) {
+          console.error("SSR /api/defoliation-analyze error:", err);
+          return Response.json(
+            { error: err instanceof Error ? err.message : String(err) },
+            { status: 500 },
+          );
+        }
+      }
+
+      if (url.pathname === "/api/trichome-scan" && request.method === "POST") {
+        try {
+          const { handleTrichomeScan } = await import("./server/trichome");
+          const payload = await request.json();
+          const result = await handleTrichomeScan(payload);
+          return Response.json(result);
+        } catch (err: unknown) {
+          console.error("SSR /api/trichome-scan error:", err);
+          return Response.json(
+            { error: err instanceof Error ? err.message : String(err) },
+            { status: 500 },
+          );
+        }
+      }
+
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return await normalizeCatastrophicSsrResponse(response);

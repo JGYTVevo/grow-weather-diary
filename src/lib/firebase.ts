@@ -1,12 +1,29 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { GoogleAuthProvider, getAuth } from "firebase/auth";
-import { doc, getDocFromServer, getFirestore } from "firebase/firestore";
-import "firebase/auth";
-import "firebase/firestore";
-
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  type User as FirebaseUser,
+} from "firebase/auth";
+import {
+  getFirestore,
+  doc,
+  getDocFromServer,
+  collection,
+  query,
+  getDocs,
+  setDoc,
+  deleteDoc,
+  onSnapshot,
+} from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 
+// Initialize Firebase App singleton
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+
+// CRITICAL: Must pass firestoreDatabaseId
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
@@ -41,7 +58,7 @@ export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
   path: string | null,
-): never {
+) {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -51,9 +68,9 @@ export function handleFirestoreError(
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
       providerInfo:
-        auth.currentUser?.providerData?.map((provider) => ({
-          providerId: provider.providerId,
-          email: provider.email,
+        auth.currentUser?.providerData?.map((p) => ({
+          providerId: p.providerId,
+          email: p.email,
         })) || [],
     },
     operationType,
@@ -63,15 +80,45 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Initial connection test
-if (typeof window !== "undefined") {
-  (async () => {
-    try {
-      await getDocFromServer(doc(db, "test", "connection"));
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("the client is offline")) {
-        console.warn("Firestore connection: client is offline or initializing.");
-      }
+export async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, "test", "connection"));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("the client is offline")) {
+      console.warn("Firestore connection: client is offline");
     }
-  })();
+  }
 }
+
+export async function loginWithGoogle(): Promise<FirebaseUser | null> {
+  try {
+    const result = await signInWithPopup(auth, googleProvider);
+    if (result.user) {
+      // Sync user profile to Firestore
+      const userRef = doc(db, "users", result.user.uid);
+      await setDoc(
+        userRef,
+        {
+          id: result.user.uid,
+          email: result.user.email || "",
+          displayName: result.user.displayName || "Gardener",
+          photoURL: result.user.photoURL || "",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true },
+      );
+    }
+    return result.user;
+  } catch (err) {
+    console.error("Google sign-in error:", err);
+    throw err;
+  }
+}
+
+export async function logoutUser(): Promise<void> {
+  await signOut(auth);
+}
+
+export { onAuthStateChanged };
+export type { FirebaseUser };
