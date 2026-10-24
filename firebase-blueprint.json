@@ -1,0 +1,229 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Firebase Auth UID"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "User email address"
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "User display name"
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Avatar photo URL"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO date string"
+        }
+      },
+      "required": ["id", "email", "createdAt"]
+    },
+    "Plant": {
+      "title": "Plant",
+      "description": "Tracked plant instance in the grow diary",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Unique plant identifier"
+        },
+        "userId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Owner user UID"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Plant nickname"
+        },
+        "strain": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Plant strain name"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["Photoperiod", "Autoflower"],
+          "description": "Photoperiod or Autoflower"
+        },
+        "medium": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Growing medium"
+        },
+        "setting": {
+          "type": "string",
+          "enum": ["Indoor", "Outdoor", "Greenhouse"],
+          "description": "Environment setting"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "Germination",
+            "Seedling",
+            "Vegetative",
+            "Flowering",
+            "Drying",
+            "Curing",
+            "Harvested"
+          ],
+          "description": "Current lifecycle stage"
+        },
+        "started": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "Date germinated/started (YYYY-MM-DD)"
+        },
+        "stageStarted": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "Date current stage began (YYYY-MM-DD)"
+        },
+        "cover": {
+          "type": "string",
+          "maxLength": 200000,
+          "description": "Compressed cover image data URL or image link"
+        },
+        "yieldG": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Dry harvested yield in grams"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO last updated timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "name",
+        "stage",
+        "started",
+        "stageStarted",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PlantLog": {
+      "title": "PlantLog",
+      "description": "Activity, watering, nutrient, or photo log for a plant",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Unique log identifier"
+        },
+        "plantId": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Parent plant ID"
+        },
+        "userId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Owner user UID"
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "Log date (YYYY-MM-DD)"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["water", "feed", "training", "environment", "photo", "note"],
+          "description": "Type of log entry"
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Text notes"
+        },
+        "photo": {
+          "type": "string",
+          "maxLength": 200000,
+          "description": "Compressed photo image data URL or image link"
+        },
+        "amount": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Water or feed volume in litres"
+        },
+        "ph": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "pH reading"
+        },
+        "ec": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "EC reading"
+        },
+        "nutrients": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Nutrients and doses"
+        },
+        "technique": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Training technique applied"
+        },
+        "temp": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "Temperature in Celsius"
+        },
+        "humidity": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "Relative humidity percentage"
+        },
+        "height": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "Plant height in cm"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO creation timestamp"
+        }
+      },
+      "required": ["id", "plantId", "userId", "date", "type", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Private profile document for each authenticated user"
+    },
+    "/users/{userId}/plants/{plantId}": {
+      "schema": "Plant",
+      "description": "Plants tracked by a specific user"
+    },
+    "/users/{userId}/plants/{plantId}/logs/{logId}": {
+      "schema": "PlantLog",
+      "description": "Journal logs for a specific plant"
+    }
+  }
+}

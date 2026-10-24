@@ -1,0 +1,106 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all unknown paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['id', 'email', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'email', 'displayName', 'photoURL', 'createdAt']) &&
+        data.id == request.auth.uid &&
+        data.email is string && data.email.size() <= 200 &&
+        (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+        (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500)) &&
+        data.createdAt is string && data.createdAt.size() <= 50;
+    }
+
+    function isValidPlant(data, ownerId) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'stage', 'started', 'stageStarted', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'name', 'strain', 'type', 'medium', 'setting', 'stage', 'started', 'stageStarted', 'cover', 'yieldG', 'createdAt', 'updatedAt']) &&
+        data.userId == ownerId &&
+        data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+        (!('strain' in data) || (data.strain is string && data.strain.size() <= 100)) &&
+        (!('type' in data) || (data.type in ['Photoperiod', 'Autoflower'])) &&
+        (!('medium' in data) || (data.medium is string && data.medium.size() <= 50)) &&
+        (!('setting' in data) || (data.setting in ['Indoor', 'Outdoor', 'Greenhouse'])) &&
+        (data.stage in ['Germination', 'Seedling', 'Vegetative', 'Flowering', 'Drying', 'Curing', 'Harvested']) &&
+        data.started is string && data.started.size() <= 20 &&
+        data.stageStarted is string && data.stageStarted.size() <= 20 &&
+        (!('cover' in data) || (data.cover is string && data.cover.size() <= 200000)) &&
+        (!('yieldG' in data) || (data.yieldG is string && data.yieldG.size() <= 20)) &&
+        data.createdAt is string && data.createdAt.size() <= 50 &&
+        data.updatedAt is string && data.updatedAt.size() <= 50;
+    }
+
+    function isValidPlantLog(data, ownerId, parentPlantId) {
+      return data.keys().hasAll(['id', 'plantId', 'userId', 'date', 'type', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'plantId', 'userId', 'date', 'type', 'note', 'photo', 'amount', 'ph', 'ec', 'nutrients', 'technique', 'temp', 'humidity', 'height', 'createdAt']) &&
+        data.userId == ownerId &&
+        data.plantId == parentPlantId &&
+        data.date is string && data.date.size() <= 20 &&
+        (data.type in ['water', 'feed', 'training', 'environment', 'photo', 'note']) &&
+        (!('note' in data) || (data.note is string && data.note.size() <= 1000)) &&
+        (!('photo' in data) || (data.photo is string && data.photo.size() <= 200000)) &&
+        (!('amount' in data) || (data.amount is string && data.amount.size() <= 20)) &&
+        (!('ph' in data) || (data.ph is string && data.ph.size() <= 10)) &&
+        (!('ec' in data) || (data.ec is string && data.ec.size() <= 10)) &&
+        (!('nutrients' in data) || (data.nutrients is string && data.nutrients.size() <= 200)) &&
+        (!('technique' in data) || (data.technique is string && data.technique.size() <= 50)) &&
+        (!('temp' in data) || (data.temp is string && data.temp.size() <= 10)) &&
+        (!('humidity' in data) || (data.humidity is string && data.humidity.size() <= 10)) &&
+        (!('height' in data) || (data.height is string && data.height.size() <= 10)) &&
+        data.createdAt is string && data.createdAt.size() <= 50;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow create, update: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming());
+      allow delete: if false;
+
+      match /plants/{plantId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(plantId) && isValidPlant(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(plantId) &&
+          isValidPlant(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().id == existing().id;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(plantId);
+
+        match /logs/{logId} {
+          allow get, list: if isOwner(userId);
+          allow create: if isOwner(userId) && isValidId(userId) && isValidId(plantId) && isValidId(logId) && isValidPlantLog(incoming(), userId, plantId);
+          allow update: if isOwner(userId) && isValidId(userId) && isValidId(plantId) && isValidId(logId) &&
+            isValidPlantLog(incoming(), userId, plantId) &&
+            incoming().userId == existing().userId &&
+            incoming().plantId == existing().plantId &&
+            incoming().id == existing().id;
+          allow delete: if isOwner(userId) && isValidId(userId) && isValidId(plantId) && isValidId(logId);
+        }
+      }
+    }
+  }
+}

@@ -56,18 +56,27 @@
   --border: oklch(0.34 0.03 150);
   --input: oklch(0.34 0.03 150);
   --ring: oklch(0.82 0.17 128);
-  --gradient-hero: radial-gradient(120% 90% at 0% 0%, oklch(0.36 0.09 140) 0%, transparent 60%),
+  --gradient-hero:
+    radial-gradient(120% 90% at 0% 0%, oklch(0.36 0.09 140) 0%, transparent 60%),
     radial-gradient(90% 80% at 100% 0%, oklch(0.4 0.09 80 / 0.6) 0%, transparent 55%);
 }
 
 @layer base {
-  * { border-color: var(--color-border); }
+  * {
+    border-color: var(--color-border);
+  }
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
   }
-  h1, h2, h3 { font-family: var(--font-display); }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+  }
 }
 
-@utility bg-hero { background-image: var(--gradient-hero); }
+@utility bg-hero {
+  background-image: var(--gradient-hero);
+}
