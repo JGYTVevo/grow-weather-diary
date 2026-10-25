@@ -9,7 +9,8 @@ describe("AI Doctor Multi-Photo & Macro Inspection", () => {
       medium: "Soil",
       images: [
         {
-          imageBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+          imageBase64:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
           slot: "canopy",
           label: "Canopy View",
           metrics: {
@@ -19,7 +20,8 @@ describe("AI Doctor Multi-Photo & Macro Inspection", () => {
           },
         },
         {
-          imageBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+          imageBase64:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
           slot: "macro",
           label: "Macro Leaf Underside",
           metrics: {
@@ -42,7 +44,8 @@ describe("AI Doctor Multi-Photo & Macro Inspection", () => {
 
   it("handles backwards-compatible single imageBase64 payload", async () => {
     const result = await handleDiagnosePlant({
-      imageBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      imageBase64:
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
       plantName: "OG Kush",
       stage: "Vegetative",
       medium: "Coco Coir",
@@ -57,6 +60,27 @@ describe("AI Doctor Multi-Photo & Macro Inspection", () => {
     expect(result.photosAnalyzed).toBe(1);
     expect(result.isHealthy).toBe(true);
     expect(result.healthScore).toBeGreaterThanOrEqual(80);
+  });
+
+  it("provides scientific evidence and verified horticultural benchmarks", async () => {
+    const result = await handleDiagnosePlant({
+      imageBase64:
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      plantName: "Amnesia Haze",
+      stage: "Vegetative",
+      medium: "Soil",
+      metrics: {
+        healthyGreenRatio: 0.8,
+        yellowRatio: 0.08,
+        brownRatio: 0.02,
+      },
+    });
+
+    expect(result.scientificEvidence).toBeDefined();
+    expect(result.scientificEvidence?.targetPH.soil).toContain("pH");
+    expect(result.scientificEvidence?.targetPH.cocoHydro).toContain("pH");
+    expect(result.scientificEvidence?.targetEC).toBeDefined();
+    expect(result.scientificEvidence?.pathologyReasoning.length).toBeGreaterThan(10);
   });
 
   it("throws error if no image data is supplied", async () => {

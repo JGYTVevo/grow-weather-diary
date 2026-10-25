@@ -8,31 +8,46 @@ import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import type { Plugin } from "vite";
 import { handleDiagnosePlant } from "./src/server/diagnose";
 
-function diagnoseApiPlugin(): Plugin {
+import { handlePlantAdvice } from "./src/server/advice";
+import { handleDoctorChat } from "./src/server/doctor-chat";
+import { handleDefoliationAnalyze } from "./src/server/defoliation";
+import { handleTrichomeScan } from "./src/server/trichome";
+
+function apiMiddlewarePlugin(): Plugin {
   return {
-    name: "diagnose-api-middleware",
+    name: "api-middleware",
     configureServer(server) {
-      server.middlewares.use("/api/diagnose-plant", (req, res, next) => {
-        if (req.method !== "POST") return next();
-        let body = "";
-        req.on("data", (chunk) => {
-          body += chunk;
+      const endpoints: Record<string, (payload: Record<string, unknown>) => Promise<unknown>> = {
+        "/api/diagnose-plant": handleDiagnosePlant,
+        "/api/advice-plant": handlePlantAdvice,
+        "/api/doctor-chat": handleDoctorChat,
+        "/api/defoliation-analyze": handleDefoliationAnalyze,
+        "/api/trichome-scan": handleTrichomeScan,
+      };
+
+      for (const [path, handler] of Object.entries(endpoints)) {
+        server.middlewares.use(path, (req, res, next) => {
+          if (req.method !== "POST") return next();
+          let body = "";
+          req.on("data", (chunk) => {
+            body += chunk;
+          });
+          req.on("end", async () => {
+            try {
+              const payload = body ? JSON.parse(body) : {};
+              const result = await handler(payload);
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify(result));
+            } catch (err: unknown) {
+              console.error(`API ${path} error:`, err);
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+            }
+          });
         });
-        req.on("end", async () => {
-          try {
-            const payload = JSON.parse(body);
-            const result = await handleDiagnosePlant(payload);
-            res.statusCode = 200;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify(result));
-          } catch (err: unknown) {
-            console.error("API /api/diagnose-plant error:", err);
-            res.statusCode = 500;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
-          }
-        });
-      });
+      }
     },
   };
 }
@@ -55,7 +70,7 @@ export default defineConfig({
     },
   },
   vite: {
-    plugins: [diagnoseApiPlugin()],
+    plugins: [apiMiddlewarePlugin()],
     oxc: {
       jsx: {
         development: false,

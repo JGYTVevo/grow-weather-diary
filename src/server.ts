@@ -108,6 +108,21 @@ export default {
         }
       }
 
+      if (url.pathname === "/api/doctor-chat" && request.method === "POST") {
+        try {
+          const { handleDoctorChat } = await import("./server/doctor-chat");
+          const payload = await request.json();
+          const result = await handleDoctorChat(payload);
+          return Response.json(result);
+        } catch (err: unknown) {
+          console.error("SSR /api/doctor-chat error:", err);
+          return Response.json(
+            { error: err instanceof Error ? err.message : String(err) },
+            { status: 500 },
+          );
+        }
+      }
+
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       return await normalizeCatastrophicSsrResponse(response);
