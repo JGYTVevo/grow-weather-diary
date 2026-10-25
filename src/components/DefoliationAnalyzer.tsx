@@ -341,18 +341,22 @@ export function DefoliationAnalyzer({
 
   const handleLogToJournal = async () => {
     if (!selectedPlantId || !onLogToPlant || !result) return;
-    const currentPlant = plants.find((p) => p.id === selectedPlantId);
-    const note = `[Canopy Defoliation Scan]: Density ${result.canopyDensityPercent}% (${result.canopyDensityRating}), Light penetration ${result.lightPenetrationScore}%. Recommendation: ${result.recommendedRemovalPercent} (${result.estimatedLeafCount}). Key action: ${result.keyActionToday}`;
+    try {
+      const currentPlant = plants.find((p) => p.id === selectedPlantId);
+      const note = `[Canopy Defoliation Scan]: Density ${result.canopyDensityPercent}% (${result.canopyDensityRating}), Light penetration ${result.lightPenetrationScore}%. Recommendation: ${result.recommendedRemovalPercent} (${result.estimatedLeafCount}). Key action: ${result.keyActionToday}`;
 
-    await onLogToPlant([selectedPlantId], {
-      type: "training",
-      note,
-      photo: photo || undefined,
-      technique: "Defoliation",
-    });
+      await onLogToPlant([selectedPlantId], {
+        type: "training",
+        note,
+        photo: photo || undefined,
+        technique: "Defoliation",
+      });
 
-    setLogSuccessMsg(`Logged defoliation recommendations to ${currentPlant?.name || "plant"}!`);
-    setTimeout(() => setLogSuccessMsg(null), 4000);
+      setLogSuccessMsg(`Logged defoliation recommendations to ${currentPlant?.name || "plant"}!`);
+      setTimeout(() => setLogSuccessMsg(null), 4000);
+    } catch (err) {
+      console.error("Failed to log defoliation recommendations:", err);
+    }
   };
 
   const currentPlant = plants.find((p) => p.id === selectedPlantId);

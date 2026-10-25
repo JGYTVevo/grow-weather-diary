@@ -74,8 +74,10 @@ export function GrowthMetricsChart({ plants, openedPlantId }: GrowthMetricsChart
     >();
 
     plants.forEach((p) => {
-      p.logs.forEach((l) => {
-        const d = l.date;
+      const pLogs = Array.isArray(p.logs) ? p.logs : [];
+      pLogs.forEach((l) => {
+        const d = typeof l.date === "string" ? l.date : "";
+        if (!d) return;
         if (!plantLogsByDate.has(d)) {
           plantLogsByDate.set(d, new Map());
         }
@@ -104,14 +106,15 @@ export function GrowthMetricsChart({ plants, openedPlantId }: GrowthMetricsChart
     const currentSimulatedHeights = new Map<string, number>();
     displayPlants.forEach((p, idx) => {
       // Find latest logged height or default based on age
-      const latestHeightLog = p.logs.find((l) => l.height)?.height;
+      const pLogs = Array.isArray(p.logs) ? p.logs : [];
+      const latestHeightLog = pLogs.find((l) => l.height)?.height;
       const parsedH = latestHeightLog ? parseFloat(latestHeightLog) : undefined;
-      const ageDays = Math.max(
-        1,
-        Math.floor((now.getTime() - new Date(p.started).getTime()) / 86400000),
-      );
+      const startedTime = p.started ? new Date(p.started).getTime() : now.getTime();
+      const ageDays = isNaN(startedTime)
+        ? 14
+        : Math.max(1, Math.floor((now.getTime() - startedTime) / 86400000));
       const fallbackStart = Math.max(8, Math.round(ageDays * 1.2) + idx * 4);
-      currentSimulatedHeights.set(p.id, parsedH || fallbackStart);
+      currentSimulatedHeights.set(p.id, parsedH && !isNaN(parsedH) ? parsedH : fallbackStart);
     });
 
     for (let i = timeRange - 1; i >= 0; i--) {
@@ -198,16 +201,20 @@ export function GrowthMetricsChart({ plants, openedPlantId }: GrowthMetricsChart
     if (chartData.length < 2 || displayPlants.length === 0) {
       return { totalGain: 0, growthRate: 0, activeLogs: 0 };
     }
-    const firstPoint = chartData[0]!;
-    const lastPoint = chartData[chartData.length - 1]!;
-    const p0 = displayPlants[0]!;
+    const firstPoint = chartData[0] || {};
+    const lastPoint = chartData[chartData.length - 1] || {};
+    const p0 = displayPlants[0];
+    if (!p0) return { totalGain: 0, growthRate: 0, activeLogs: 0 };
 
     const startVal = typeof firstPoint[p0.name] === "number" ? (firstPoint[p0.name] as number) : 10;
     const endVal = typeof lastPoint[p0.name] === "number" ? (lastPoint[p0.name] as number) : 30;
     const totalGain = Math.max(0, endVal - startVal);
     const growthRate = +(totalGain / (timeRange || 1)).toFixed(2);
 
-    const activeLogs = displayPlants.reduce((acc, p) => acc + p.logs.length, 0);
+    const activeLogs = displayPlants.reduce(
+      (acc, p) => acc + (Array.isArray(p.logs) ? p.logs.length : 0),
+      0,
+    );
 
     return { totalGain, growthRate, activeLogs };
   }, [chartData, displayPlants, timeRange]);

@@ -8,6 +8,7 @@ import {
   type User as FirebaseUser,
 } from "firebase/auth";
 import {
+  initializeFirestore,
   getFirestore,
   doc,
   getDocFromServer,
@@ -23,8 +24,14 @@ import firebaseConfig from "../../firebase-applet-config.json";
 // Initialize Firebase App singleton
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// CRITICAL: Must pass firestoreDatabaseId
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// CRITICAL: Must pass firestoreDatabaseId and ignoreUndefinedProperties
+export const db = initializeFirestore(
+  app,
+  {
+    ignoreUndefinedProperties: true,
+  },
+  firebaseConfig.firestoreDatabaseId,
+);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 

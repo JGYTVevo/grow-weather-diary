@@ -175,27 +175,39 @@ export function PlantsPanel({
   }, [externalLog, active]);
 
   const handleSaveNew = async (p: Plant) => {
-    await createPlant(p);
-    setAdding(false);
+    try {
+      await createPlant(p);
+      setAdding(false);
+    } catch (err) {
+      console.error("Failed to create plant:", err);
+    }
   };
 
   const handleDelete = async (id: string) => {
-    await deletePlant(id);
-    setOpenId(null);
-    onClosePlant?.();
+    try {
+      await deletePlant(id);
+      setOpenId(null);
+      onClosePlant?.();
+    } catch (err) {
+      console.error("Failed to delete plant:", err);
+    }
   };
 
   const attachExternalLogToPlants = async (plantIds: string[]) => {
     if (!externalLog || plantIds.length === 0) return;
-    await addLogToPlants(plantIds, {
-      type: externalLog.type,
-      note: externalLog.note,
-      photo: externalLog.photo,
-      temp: externalLog.temp,
-      humidity: externalLog.humidity,
-      date: today(),
-    });
-    onClearExternalLog?.();
+    try {
+      await addLogToPlants(plantIds, {
+        type: externalLog.type,
+        note: externalLog.note,
+        photo: externalLog.photo,
+        temp: externalLog.temp,
+        humidity: externalLog.humidity,
+        date: today(),
+      });
+      onClearExternalLog?.();
+    } catch (err) {
+      console.error("Failed to attach log to plants:", err);
+    }
   };
 
   const open = plants.find((p) => p.id === openId);
@@ -317,7 +329,7 @@ export function PlantsPanel({
         {[
           ["Active", active.length],
           ["Harvested", plants.length - active.length],
-          ["Logs", plants.reduce((n, p) => n + p.logs.length, 0)],
+          ["Logs", plants.reduce((n, p) => n + (Array.isArray(p.logs) ? p.logs.length : 0), 0)],
         ].map(([l, v]) => (
           <div key={l} className="rounded-2xl border bg-card p-3 text-center">
             <div className="font-display text-2xl">{v}</div>
@@ -395,9 +407,10 @@ function NewPlant({ onSave }: { onSave: (p: Plant) => void }) {
         onSave({
           id: uid(),
           ...f,
-          cover: f.cover || undefined,
+          name: f.name.trim(),
+          cover: f.cover.trim() ? f.cover : undefined,
           stage: "Germination",
-          stageStarted: f.started,
+          stageStarted: f.started || today(),
           logs: [],
         });
       }}
@@ -708,10 +721,15 @@ function PlantView({
           <LogForm
             type={logType}
             onSave={(l) => {
-              onChange((x) => ({
-                ...x,
-                logs: [l, ...(x.logs || [])].sort((a, b) => b.date.localeCompare(a.date)),
-              }));
+              onChange((x) => {
+                const currentLogs = Array.isArray(x.logs) ? x.logs : [];
+                const updatedLogs = [l, ...currentLogs];
+                updatedLogs.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+                return {
+                  ...x,
+                  logs: updatedLogs,
+                };
+              });
               setLogType(null);
             }}
           />
@@ -752,11 +770,13 @@ function PlantView({
                   <div className="flex justify-between text-xs text-muted-foreground">
                     <span className="font-semibold text-foreground">{LOGS[l.type].label}</span>
                     <span>
-                      {new Date(l.date).toLocaleDateString()} · D
+                      {l.date ? new Date(l.date).toLocaleDateString() : "Today"} · D
                       {Math.max(
                         1,
                         Math.floor(
-                          (new Date(l.date).getTime() - new Date(p.started).getTime()) / 86400000,
+                          ((l.date ? new Date(l.date).getTime() : Date.now()) -
+                            (p.started ? new Date(p.started).getTime() : Date.now())) /
+                            86400000,
                         ) + 1,
                       )}
                     </span>
@@ -823,13 +843,18 @@ function Details({ l }: { l: Log }) {
 function LogForm({ type, onSave }: { type: LogType; onSave: (l: Log) => void }) {
   const [l, setL] = useState<Log>({ id: uid(), date: today(), type });
   const set = (k: keyof Log) => (e: { target: { value: string } }) =>
-    setL({ ...l, [k]: e.target.value });
+    setL((prev) => ({ ...prev, [k]: e.target.value }));
   return (
     <form
       className="mt-3 space-y-2 rounded-2xl border bg-card p-4"
       onSubmit={(e) => {
         e.preventDefault();
-        onSave(l);
+        onSave({
+          ...l,
+          id: l.id || uid(),
+          date: l.date || today(),
+          type,
+        });
       }}
     >
       <input className={input} type="date" value={l.date} onChange={set("date")} />

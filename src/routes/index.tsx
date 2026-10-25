@@ -81,12 +81,16 @@ function Index() {
     plantIds: string[],
     logData: { note: string; photo: string },
   ) => {
-    await addLogToPlants(plantIds, {
-      type: "photo",
-      note: logData.note,
-      photo: logData.photo,
-      date: new Date().toISOString().slice(0, 10),
-    });
+    try {
+      await addLogToPlants(plantIds, {
+        type: "photo",
+        note: logData.note,
+        photo: logData.photo,
+        date: new Date().toISOString().slice(0, 10),
+      });
+    } catch (err) {
+      console.error("Failed to save diagnosis to plants:", err);
+    }
   };
 
   const handleLogAdviceToPlant = async (
@@ -101,10 +105,14 @@ function Index() {
       technique?: string;
     },
   ) => {
-    await addLogToPlants(plantIds, {
-      ...logData,
-      date: new Date().toISOString().slice(0, 10),
-    });
+    try {
+      await addLogToPlants(plantIds, {
+        ...logData,
+        date: new Date().toISOString().slice(0, 10),
+      });
+    } catch (err) {
+      console.error("Failed to log advice to plants:", err);
+    }
   };
 
   return (

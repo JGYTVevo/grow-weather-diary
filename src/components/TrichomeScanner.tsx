@@ -317,17 +317,21 @@ export function TrichomeScanner({
 
   const handleLogToJournal = async () => {
     if (!selectedPlantId || !onLogToPlant || !result) return;
-    const currentPlant = plants.find((p) => p.id === selectedPlantId);
-    const note = `[Trichome Harvest Scan]: ${result.cloudyPercent}% Cloudy, ${result.amberPercent}% Amber, ${result.clearPercent}% Clear. Harvest Window: ${result.harvestWindowStatus} (${result.estimatedDaysToHarvest}). ${result.flushRecommendation.status}. Action: ${result.keyActionToday}`;
+    try {
+      const currentPlant = plants.find((p) => p.id === selectedPlantId);
+      const note = `[Trichome Harvest Scan]: ${result.cloudyPercent}% Cloudy, ${result.amberPercent}% Amber, ${result.clearPercent}% Clear. Harvest Window: ${result.harvestWindowStatus} (${result.estimatedDaysToHarvest}). ${result.flushRecommendation.status}. Action: ${result.keyActionToday}`;
 
-    await onLogToPlant([selectedPlantId], {
-      type: "note",
-      note,
-      photo: photo || undefined,
-    });
+      await onLogToPlant([selectedPlantId], {
+        type: "note",
+        note,
+        photo: photo || undefined,
+      });
 
-    setLogSuccessMsg(`Logged harvest window to ${currentPlant?.name || "plant"}!`);
-    setTimeout(() => setLogSuccessMsg(null), 4000);
+      setLogSuccessMsg(`Logged harvest window to ${currentPlant?.name || "plant"}!`);
+      setTimeout(() => setLogSuccessMsg(null), 4000);
+    } catch (err) {
+      console.error("Failed to log trichome scan to plant:", err);
+    }
   };
 
   // Loupe pointer tracking

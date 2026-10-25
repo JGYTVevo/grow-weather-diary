@@ -203,17 +203,19 @@ export function QuickLogModal({
           : `Height: ${heightCm}cm`;
       }
 
-      await onSaveLog(selectedPlantIds, {
+      const payload: Omit<Log, "id"> = {
         type: logType,
         note: noteContent || "Daily check-in completed",
-        photo: photo || undefined,
-        amount,
-        ph,
-        ec,
-        technique,
-        height,
         date: new Date().toISOString().slice(0, 10),
-      });
+      };
+      if (photo) payload.photo = photo;
+      if (amount) payload.amount = amount;
+      if (ph) payload.ph = ph;
+      if (ec) payload.ec = ec;
+      if (technique) payload.technique = technique;
+      if (height) payload.height = height;
+
+      await onSaveLog(selectedPlantIds, payload);
 
       setSavedSuccess(true);
       setTimeout(() => {

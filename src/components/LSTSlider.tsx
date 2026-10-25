@@ -256,25 +256,29 @@ export function LSTSlider({
   // Handle Save to Plant's Journal
   const handleLogToJournal = async () => {
     if (!selectedPlantId || !onLogToPlant) return;
-    const daysLabel =
-      daysDifference !== null && daysDifference > 0
-        ? ` (${daysDifference} day(s) after training)`
-        : "";
-    const note = `[${technique} Visual Comparison${daysLabel}]: ${title}. ${
-      canopyNotes ? `Canopy notes: ${canopyNotes}. ` : ""
-    }Estimated canopy spread: +${spreadIncrease}%, new shoots illuminated: ${shootsExposed}.`;
+    try {
+      const daysLabel =
+        daysDifference !== null && daysDifference > 0
+          ? ` (${daysDifference} day(s) after training)`
+          : "";
+      const note = `[${technique} Visual Comparison${daysLabel}]: ${title}. ${
+        canopyNotes ? `Canopy notes: ${canopyNotes}. ` : ""
+      }Estimated canopy spread: +${spreadIncrease}%, new shoots illuminated: ${shootsExposed}.`;
 
-    await onLogToPlant([selectedPlantId], {
-      type: "training",
-      note,
-      photo: afterPhoto,
-      technique,
-    });
+      await onLogToPlant([selectedPlantId], {
+        type: "training",
+        note,
+        photo: afterPhoto,
+        technique,
+      });
 
-    setSaveSuccessMsg(
-      `Logged training comparison into ${currentPlant?.name || "plant"}'s journal!`,
-    );
-    setTimeout(() => setSaveSuccessMsg(null), 4000);
+      setSaveSuccessMsg(
+        `Logged training comparison into ${currentPlant?.name || "plant"}'s journal!`,
+      );
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
+    } catch (err) {
+      console.error("Failed to log training comparison:", err);
+    }
   };
 
   const handleStartNewComparison = () => {
