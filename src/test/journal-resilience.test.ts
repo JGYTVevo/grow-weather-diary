@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { sanitizePlant, sanitizeLog, uid, today, type Plant, type Log } from "../hooks/use-plants";
+import { sanitizeFertilizer, type HomemadeFertilizer } from "../hooks/use-fertilizers";
 
 describe("Journal and Plant Data Resilience", () => {
   it("sanitizes plant with undefined and missing properties", () => {
@@ -46,6 +47,59 @@ describe("Journal and Plant Data Resilience", () => {
     expect(Object.prototype.hasOwnProperty.call(log, "ec")).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(log, "photo")).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(log, "note")).toBe(false);
+  });
+
+  it("preserves fertilizerForm (Raw or Diluted) and dilutionRatio on feed logs", () => {
+    const dilutedLog = sanitizeLog({
+      type: "feed",
+      nutrients: "Banana Peel FPJ",
+      fertilizerForm: "Diluted",
+      dilutionRatio: "1:500 (2 ml/L)",
+    });
+    expect(dilutedLog.fertilizerForm).toBe("Diluted");
+    expect(dilutedLog.dilutionRatio).toBe("1:500 (2 ml/L)");
+
+    const rawLog = sanitizeLog({
+      type: "feed",
+      nutrients: "Worm Castings",
+      fertilizerForm: "Raw",
+      dilutionRatio: "Undiluted (Raw)",
+    });
+    expect(rawLog.fertilizerForm).toBe("Raw");
+    expect(rawLog.dilutionRatio).toBe("Undiluted (Raw)");
+  });
+
+  it("sanitizes homemade fertilizers in both Raw and Diluted forms without undefined keys", () => {
+    const rawFert: Partial<HomemadeFertilizer> = {
+      id: "fert/bad$id!1",
+      name: "  Worm Castings Slurry  ",
+      fertilizerType: "Worm Castings / Vermicompost",
+      form: "Raw",
+      dilutionRatio: "Top-dress (2 tbsp/pot)",
+      ingredients: undefined,
+      notes: undefined,
+    };
+
+    const sRaw = sanitizeFertilizer(rawFert, "user-abc");
+    expect(sRaw.id).toBe("fertbadid1");
+    expect(sRaw.userId).toBe("user-abc");
+    expect(sRaw.name).toBe("Worm Castings Slurry");
+    expect(sRaw.fertilizerType).toBe("Worm Castings / Vermicompost");
+    expect(sRaw.form).toBe("Raw");
+    expect(sRaw.dilutionRatio).toBe("Top-dress (2 tbsp/pot)");
+    expect(Object.prototype.hasOwnProperty.call(sRaw, "ingredients")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(sRaw, "notes")).toBe(false);
+
+    const dilutedFert = sanitizeFertilizer({
+      name: "Banana Peel FPJ",
+      fertilizerType: "Banana Peel Tea / FPJ",
+      form: "Diluted",
+      dilutionRatio: "1:500 (2 ml/L)",
+      targetStage: "Flowering",
+    });
+    expect(dilutedFert.form).toBe("Diluted");
+    expect(dilutedFert.dilutionRatio).toBe("1:500 (2 ml/L)");
+    expect(dilutedFert.targetStage).toBe("Flowering");
   });
 
   it("safely sorts logs without crashing when dates are missing or invalid", () => {

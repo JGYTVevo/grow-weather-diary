@@ -9,7 +9,7 @@ import {
   sendBrowserNotification,
   type WeatherThresholdSettings,
 } from "@/lib/weather-notifications";
-import type { Forecast } from "@/lib/weather";
+import { buildSevenDayForecast, buildAlerts, type Forecast } from "@/lib/weather";
 import type { Plant } from "@/hooks/use-plants";
 
 const mockForecast: Forecast = {
@@ -40,28 +40,24 @@ const mockPlants: Plant[] = [
     id: "p1",
     name: "Northern Lights Outdoor",
     strain: "Northern Lights",
-    stage: "Mid-Flower",
+    type: "Photoperiod",
+    stage: "Flowering",
     setting: "Outdoor",
     medium: "Living Soil",
-    startDate: "2026-08-01",
-    potSize: "25L",
-    lightCycle: "12/12",
-    ecTarget: "1.8",
-    phTarget: "6.5",
+    started: "2026-08-01",
+    stageStarted: "2026-09-15",
     logs: [],
   },
   {
     id: "p2",
     name: "Amnesia Greenhouse",
     strain: "Amnesia Haze",
+    type: "Photoperiod",
     stage: "Vegetative",
     setting: "Greenhouse",
     medium: "Coco Coir",
-    startDate: "2026-09-01",
-    potSize: "15L",
-    lightCycle: "18/6",
-    ecTarget: "1.6",
-    phTarget: "5.8",
+    started: "2026-09-01",
+    stageStarted: "2026-09-10",
     logs: [],
   },
 ];
@@ -250,5 +246,111 @@ describe("Weather Push Notifications Service", () => {
     // Immediate second call should be suppressed by cooldown
     const secondRun = await checkWeatherThresholdsAndNotify(frostForecast, mockPlants);
     expect(secondRun.length).toBe(0);
+  });
+
+  it("builds a 7-day forecast and accurately lists every predicted weather warning per day", () => {
+    const dates = [
+      "2026-10-30",
+      "2026-10-31",
+      "2026-11-01",
+      "2026-11-02",
+      "2026-11-03",
+      "2026-11-04",
+      "2026-11-05",
+    ];
+
+    const hourlyTimes: string[] = [];
+    const hourlyTemps: number[] = [];
+    const hourlyRh: number[] = [];
+    const hourlyWind: number[] = [];
+    const hourlyPrecip: number[] = [];
+    const hourlyUv: number[] = [];
+
+    dates.forEach((date, dayIdx) => {
+      for (let h = 0; h < 24; h++) {
+        hourlyTimes.push(`${date}T${String(h).padStart(2, "0")}:00`);
+        // Day 0: Optimal clear day (22C, 55% RH, 15km/h wind)
+        // Day 1: Frost + Strong Wind (drops to 1C, gusts 65 km/h)
+        // Day 2: Cold stress + Heavy Rain + Mould risk (7C low, 90% RH for 8h, 24mm rain)
+        // Day 3: Extreme Heat + Extreme UV (37C high, UV 10)
+        // Day 4-6: Optimal
+        if (dayIdx === 1) {
+          hourlyTemps.push(h < 5 ? 1 : 14);
+          hourlyRh.push(60);
+          hourlyWind.push(h === 12 ? 65 : 25);
+          hourlyPrecip.push(0);
+          hourlyUv.push(4);
+        } else if (dayIdx === 2) {
+          hourlyTemps.push(h < 6 ? 7 : 16);
+          hourlyRh.push(h < 8 ? 90 : 65);
+          hourlyWind.push(20);
+          hourlyPrecip.push(h < 8 ? 3 : 0); // 24mm total
+          hourlyUv.push(3);
+        } else if (dayIdx === 3) {
+          hourlyTemps.push(h === 14 ? 37 : 26);
+          hourlyRh.push(40);
+          hourlyWind.push(18);
+          hourlyPrecip.push(0);
+          hourlyUv.push(h === 13 ? 10 : 5);
+        } else {
+          hourlyTemps.push(22);
+          hourlyRh.push(55);
+          hourlyWind.push(15);
+          hourlyPrecip.push(0);
+          hourlyUv.push(5);
+        }
+      }
+    });
+
+    const sevenDayMock: Forecast = {
+      current: {
+        temperature_2m: 22,
+        relative_humidity_2m: 55,
+        wind_speed_10m: 15,
+      },
+      daily: {
+        time: dates,
+        temperature_2m_max: [24, 15, 17, 37, 23, 24, 25],
+        temperature_2m_min: [14, 1, 7, 20, 13, 14, 15],
+        precipitation_sum: [0, 0, 24, 0, 0, 0, 0],
+        wind_gusts_10m_max: [20, 65, 25, 22, 18, 19, 20],
+        uv_index_max: [6, 4, 3, 10, 6, 6, 7],
+      },
+      hourly: {
+        time: hourlyTimes,
+        temperature_2m: hourlyTemps,
+        relative_humidity_2m: hourlyRh,
+        wind_gusts_10m: hourlyWind,
+        precipitation: hourlyPrecip,
+        uv_index: hourlyUv,
+      },
+    };
+
+    const result = buildSevenDayForecast(sevenDayMock);
+    expect(result).toHaveLength(7);
+
+    // Day 0 (Today): No warnings
+    expect(result[0]?.dayLabel).toBe("Today");
+    expect(result[0]?.warnings).toHaveLength(0);
+
+    // Day 1 (Tomorrow): Frost risk + Strong wind gusts
+    expect(result[1]?.dayLabel).toBe("Tomorrow");
+    const day1Titles = result[1]?.warnings.map((w) => w.title) ?? [];
+    expect(day1Titles).toContain("Frost risk");
+    expect(day1Titles).toContain("Strong wind gusts");
+
+    // Day 2: Cold stress + Bud rot / mould risk + Heavy rain
+    const day2Titles = result[2]?.warnings.map((w) => w.title) ?? [];
+    expect(day2Titles).toContain("Cold stress");
+    expect(day2Titles).toContain("Bud rot / mould risk");
+    expect(day2Titles).toContain("Heavy rain");
+
+    // Day 3: Extreme heat + Extreme UV
+    const day3Titles = result[3]?.warnings.map((w) => w.title) ?? [];
+    expect(day3Titles).toContain("Extreme heat");
+    expect(day3Titles).toContain("Extreme UV");
+
+    // Ensure buildAlerts also handles optional uv_index safely
+    expect(() => buildAlerts(mockForecast)).not.toThrow();
   });
 });

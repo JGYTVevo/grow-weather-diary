@@ -187,13 +187,20 @@ export function evaluateDefoliationHeuristics(
         "Cut cleanly at the leaf petiole base, leaving a 2mm stub so stem vascular tissue remains sealed.",
       ];
 
+  const mediumLower = `${payload.medium || ""} ${payload.growerNotes || ""}`.toLowerCase();
+  const isLivingSoil = mediumLower.includes("living") || mediumLower.includes("organic");
+  const isInGround = mediumLower.includes("ground") || mediumLower.includes("bed");
+
   const recoveryProtocol = {
     lightAdjustment: isSeedling
       ? "Maintain normal seedling PPFD (~150-200 umol)"
-      : "Dim grow light by 10%–15% or raise light 5 cm for 24–36 hours post-defoliation",
+      : isInGround
+        ? "Prune in the late afternoon or evening so outdoor plants recover overnight out of peak sun"
+        : "Dim grow light by 10%–15% or raise light 5 cm for 24–36 hours post-defoliation",
     vpdTarget: "1.0 – 1.2 kPa (maintain 24–26°C and 55–60% RH to minimize transpiration shock)",
-    recoveryFeeding:
-      "Administer balanced feed with Potassium Silicate (Silica) + 1.0ml/L Cal-Mag to reinforce cell wall elasticity",
+    recoveryFeeding: isLivingSoil
+      ? `Give ${plantName} a gentle drench of aloe vera, kelp, or aerated worm-casting tea in your living soil${isInGround ? " ground bed" : ""} to soothe pruning stress naturally`
+      : "Administer balanced feed with Potassium Silicate (Silica) + 1.0ml/L Cal-Mag to reinforce cell wall elasticity",
     expectedRecoveryHours: isAuto ? "48 – 72 hours" : "24 – 48 hours",
   };
 
@@ -206,7 +213,7 @@ export function evaluateDefoliationHeuristics(
         : `Canopy density on ${plantName} is in an optimal zone (${canopyDensityPercent}%). Light tucking is sufficient.`;
 
   return {
-    summary: `${plantName} canopy density is at ${canopyDensityPercent}% (${canopyDensityRating}) with ${lightPenetrationRating} light penetration to lower nodes. ${
+    summary: `${plantName} (${payload.medium || "Soil"}) canopy density is at ${canopyDensityPercent}% (${canopyDensityRating}) with ${lightPenetrationRating} light penetration to lower nodes. ${
       canopyDensityPercent > 70
         ? "Selective defoliation will significantly improve bud site energy and airflow."
         : "Canopy is balanced with good leaf distribution."
@@ -240,25 +247,26 @@ export async function handleDefoliationAnalyze(
     growerNotes = "",
   } = payload;
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env["GEMINI_API_KEY"];
   const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z+]+;base64,/, "").trim();
 
   if (!cleanBase64) {
     throw new Error("No image data provided for defoliation analysis.");
   }
 
-  // Attempt Gemini 3.8 Flash with 3.5s timeout for fast, zero-hang response
-  if (apiKey) {
+  const isRealPhoto = cleanBase64.length > 250;
+
+  // Attempt Gemini 3.1 Flash Lite with 3.5s timeout for fast, zero-hang response
+  if (apiKey && isRealPhoto) {
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => {
       abortController.abort();
-    }, 3500);
+    }, 9000);
 
     const ai = new GoogleGenAI({
       apiKey,
       httpOptions: {
         headers: { "User-Agent": "aistudio-build" },
-        signal: abortController.signal,
       },
     });
 
@@ -284,14 +292,11 @@ Return strict JSON adhering to the schema.`;
 
     try {
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error("Gemini defoliation analysis timed out after 3.5s")),
-          3500,
-        ),
+        setTimeout(() => reject(new Error("Gemini defoliation analysis timed out after 9s")), 9000),
       );
 
       const geminiPromise = ai.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: "gemini-3-flash-preview",
         contents: [
           {
             role: "user",
@@ -307,6 +312,7 @@ Return strict JSON adhering to the schema.`;
           },
         ],
         config: {
+          abortSignal: abortController.signal,
           systemInstruction:
             "You are GrowBuddy AI Canopy & Defoliation Specialist. Return practical, highly actionable botanical defoliation guidance in strict JSON adhering to schema.",
           responseMimeType: "application/json",

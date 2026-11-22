@@ -1,3 +1,7 @@
+import type { LinkedJournalContextPayload } from "@/server/diagnose";
+
+export type { LinkedJournalContextPayload };
+
 export interface ImageAnalysisMetrics {
   averageBrightness?: number;
   greenRatio?: number;
@@ -8,14 +12,14 @@ export interface ImageAnalysisMetrics {
   contrast?: number;
 }
 
-export type PhotoSlotType = "canopy" | "macro" | "substrate" | "general";
+export type PhotoSlotType = "canopy" | "macro" | "substrate";
 
 export interface ImageInputItem {
   imageBase64: string;
-  mimeType?: string;
-  slot?: PhotoSlotType;
-  label?: string;
-  metrics?: ImageAnalysisMetrics;
+  mimeType?: string | undefined;
+  slot?: PhotoSlotType | undefined;
+  label?: string | undefined;
+  metrics?: ImageAnalysisMetrics | undefined;
 }
 
 export interface ScientificEvidence {
@@ -42,21 +46,24 @@ export interface PlantDiagnosisResult {
   actionPlan: string[];
   preventiveTips: string[];
   estimatedRecoveryDays: string;
-  scientificEvidence?: ScientificEvidence;
-  source?: "gemini-3.8-flash" | "visual-heuristics" | "botanical-knowledge-base";
-  photosAnalyzed?: number;
+  scientificEvidence?: ScientificEvidence | undefined;
+  journalContextUsed?: string[] | undefined;
+  source?: "gemini-3.8-flash" | "visual-heuristics" | "botanical-knowledge-base" | undefined;
+  photosAnalyzed?: number | undefined;
 }
 
 export interface DiagnosePlantOptions {
-  imageBase64?: string;
-  images?: ImageInputItem[];
-  mimeType?: string;
-  plantInfo?: string;
-  plantName?: string;
-  stage?: string;
-  medium?: string;
-  metrics?: ImageAnalysisMetrics;
+  imageBase64?: string | undefined;
+  images?: ImageInputItem[] | undefined;
+  mimeType?: string | undefined;
+  plantInfo?: string | undefined;
+  plantName?: string | undefined;
+  stage?: string | undefined;
+  medium?: string | undefined;
+  journalContext?: LinkedJournalContextPayload | undefined;
+  metrics?: ImageAnalysisMetrics | undefined;
 }
+
 function fallbackBotanicalDiagnosis(
   payload: DiagnosePlantOptions,
   imagesCount: number,
@@ -65,46 +72,84 @@ function fallbackBotanicalDiagnosis(
   const yellow = m.yellowRatio ?? 0.12;
   const brown = m.brownRatio ?? 0.05;
   const green = m.healthyGreenRatio ?? m.greenRatio ?? 0.68;
-  const plantName = payload.plantName || "Your Plant";
-  const stage = payload.stage || "Vegetative";
-  const medium = payload.medium || "Soil";
+
+  const jc = payload.journalContext;
+  const plantName = jc?.plantName || payload.plantName || "Your plant";
+  const stage = jc?.stage || payload.stage || "Vegetative";
+  const medium = jc?.medium || payload.medium || "Soil";
+  const setting = jc?.setting || "Outdoor";
+
+  const combinedLower =
+    `${medium} ${payload.plantInfo || ""} ${jc?.promptBlock || ""}`.toLowerCase();
+  const isLivingSoil = Boolean(
+    jc?.isLivingSoil || combinedLower.includes("living soil") || combinedLower.includes("no-till"),
+  );
+  const isInGround = Boolean(
+    jc?.isInGround ||
+    combinedLower.includes("in the ground") ||
+    combinedLower.includes("in ground"),
+  );
+
+  const waterNote = jc?.recentWaterSummary ? ` (${jc.recentWaterSummary})` : "";
+  const feedNote = jc?.recentFeedsSummary ? ` (${jc.recentFeedsSummary})` : "";
+  const trainingNote =
+    jc?.trainingSummary && !jc.trainingSummary.toLowerCase().includes("untrained")
+      ? ` Your journal shows ${jc.trainingSummary.toLowerCase()}, and the branches look responsive.`
+      : "";
+
+  const journalBadges = jc?.journalContextBadges || [
+    `🌱 ${plantName} (${stage})`,
+    `🌍 ${setting} · ${medium}`,
+    ...(jc?.recentWaterSummary ? [`💧 ${jc.recentWaterSummary}`] : []),
+    ...(jc?.recentFeedsSummary ? [`🧪 ${jc.recentFeedsSummary}`] : []),
+    ...(jc?.trainingSummary ? [`✂️ ${jc.trainingSummary}`] : []),
+  ];
 
   const isHealthy = green > 0.6 && yellow < 0.14 && brown < 0.08;
   if (isHealthy) {
     return {
-      condition: `Healthy & Vigorous Foliage (${stage})`,
+      condition: `Happy & Healthy Plant (${stage})`,
       isHealthy: true,
       healthScore: 92,
       confidence: "High",
       severity: "healthy",
-      summary: `${plantName} exhibits robust chlorophyll pigment, healthy leaf turgidity, and balanced cellular development.`,
+      summary: `${plantName} looks great in its ${setting.toLowerCase()} ${medium.toLowerCase()} setup! The leaves have a healthy, vibrant green colour and look perky and strong, with no signs of bugs, mould, or feeding problems.${trainingNote}`,
       symptoms: [
-        "Uniform emerald coloration across fan leaves",
-        "Upward leaf prayer posture indicating active transpiration",
-        "No signs of pest stippling, chlorosis, or necrotic margins",
+        "Even, vibrant green colour across the leaves",
+        "Leaves are perky and reaching up nicely toward the light",
+        "No yellowing, brown crispy tips, or bug marks",
       ],
       possibleCauses: [
-        "Optimal root-zone aeration and nutrient balance",
-        "Proper transpiration-to-lighting equilibrium",
+        `Healthy roots thriving in your ${medium}${isInGround ? " in the ground" : ""}`,
+        `Good balance of watering${waterNote} and plant nutrition${feedNote}`,
       ],
       actionPlan: [
-        `Maintain balanced feeding suitable for ${stage}.`,
-        "Continue tracking dryback intervals and runoff EC/pH.",
+        `Keep doing what you're doing! Continue your current ${stage} care routine for ${plantName}.${feedNote}`,
+        isInGround || isLivingSoil
+          ? "Check soil moisture 2 inches under the mulch or top layer with your finger before watering so your living soil stays evenly moist."
+          : "Feel the top inch of soil with your finger before watering so you don't overwater.",
       ],
       preventiveTips: [
-        "Maintain VPD between 0.8 and 1.2 kPa.",
-        "Keep oscillating fan airflow moving through mid-canopy.",
+        isLivingSoil || isInGround
+          ? "Keep a healthy layer of straw or leaf mulch over your living soil in the ground to keep soil microbes cool and moist."
+          : "Keep a gentle breeze moving around the plant so fresh air reaches the leaves.",
+        "Take a quick peek under a few leaves once a week to check for any garden bugs.",
       ],
-      estimatedRecoveryDays: "Ongoing health",
+      estimatedRecoveryDays: "Already healthy!",
       scientificEvidence: {
-        nutrientMobility: "Balanced & Mobile (Optimal Chlorophyll)",
+        nutrientMobility: "All-Round Balanced (Healthy Green Leaves)",
         targetPH: { soil: "6.2 – 6.8 pH", cocoHydro: "5.8 – 6.2 pH" },
-        targetEC: stage.toLowerCase().includes("flower") ? "1.6 – 2.0 mS/cm" : "1.2 – 1.6 mS/cm",
-        targetVPD: "0.8 – 1.2 kPa",
-        identifiedMarkers: ["Healthy chlorophyll distribution", "Turgid leaf petioles"],
+        targetEC: isLivingSoil
+          ? "Living Soil Web (0.8 – 1.4 mS/cm Organic Teas)"
+          : stage.toLowerCase().includes("flower")
+            ? "1.6 – 2.0 mS/cm"
+            : "1.2 – 1.6 mS/cm",
+        targetVPD: "Comfortable Humidity (50–65%)",
+        identifiedMarkers: ["Rich green leaf colour", "Perky upward leaves"],
         pathologyReasoning:
-          "Foliar spectrum matches standard vegetative/bloom chlorophyll saturation benchmarks.",
+          "In plain terms: your plant is getting the right amount of water, light, and plant food, so the leaves are full of healthy green energy.",
       },
+      journalContextUsed: journalBadges,
       source: "visual-heuristics",
       photosAnalyzed: imagesCount,
     };
@@ -112,80 +157,99 @@ function fallbackBotanicalDiagnosis(
 
   if (brown > 0.1) {
     return {
-      condition: "Early Calcium Deficiency & Marginal Necrosis",
+      condition: "Needs a Little Calcium & Magnesium (Small Brown Spots on Leaves)",
       isHealthy: false,
       healthScore: 68,
       confidence: "Medium",
       severity: "warning",
-      summary: `Localized brown necrotic speckling detected on ${plantName}, characteristic of calcium immobility or root pH drift.`,
+      summary: `We spotted some small brown or rusty spots on ${plantName} (${setting} · ${medium}).${feedNote}${waterNote} In a home garden, this usually means the plant needs a little extra calcium & magnesium, or the top layer of ${medium.toLowerCase()} dried out on a warm day.${trainingNote}`,
       symptoms: [
-        "Bronze/brown localized spots on upper to middle fan leaves",
-        "Slight curling or brittleness at leaf margins",
+        "Small brown or rust-coloured spots on the middle or upper leaves",
+        "Slightly dry or crispy leaf edges",
       ],
       possibleCauses: [
-        "Root-zone pH drift locking out divalent calcium ions",
-        "Stagnant humidity hindering xylem transpiration",
+        "The plant is running low on calcium or magnesium",
+        isLivingSoil || isInGround
+          ? `Top layer of ${medium.toLowerCase()} drying out in warm sun`
+          : "Soil drying out too fast or mild fertilizer buildup in the pot",
       ],
       actionPlan: [
-        `Test and calibrate runoff pH immediately in ${medium}. Aim for 6.2-6.5 (soil) or 5.8-6.1 (coco).`,
-        "Supplement with 1.5 ml/L Cal-Mag at the next watering.",
+        isLivingSoil || isInGround
+          ? `Water ${plantName} deeply and evenly across the ground bed so the living soil is nicely hydrated${waterNote}.`
+          : `Give ${plantName} a good watering with plain water first to rinse the ${medium}.`,
+        isLivingSoil
+          ? `Water in a gentle organic calcium/magnesium boost (like a pinch of Epsom salts, worm castings tea, or your saved diluted homemade fertilizer${feedNote}).`
+          : "Add a gentle dose of Calcium-Magnesium (Cal-Mag) or balanced liquid plant food on the next feed.",
       ],
       preventiveTips: [
-        "Maintain steady root temperature between 20°C and 23°C.",
-        "Ensure adequate air movement across upper leaf canopy.",
+        isInGround || isLivingSoil
+          ? "Add a 2–3 cm mulch layer over the ground soil so surface roots stay cool and moist."
+          : "Don't let the pot dry out bone-dry on hot days.",
+        isLivingSoil
+          ? "Feed the living soil gently with compost teas or diluted homemade brews."
+          : "Alternate liquid feeds with plain water every second watering in soil.",
       ],
       estimatedRecoveryDays: "5–8 days",
       scientificEvidence: {
-        nutrientMobility: "Immobile Element (Affects Upper & Mid-Canopy New Growth)",
+        nutrientMobility: "Shows on Newer / Middle Leaves First (Calcium)",
         targetPH: {
-          soil: "6.2 – 6.5 pH (Optimal 6.3)",
-          cocoHydro: "5.8 – 6.2 pH (Optimal 6.0)",
+          soil: "6.2 – 6.5 pH (Ideal 6.3)",
+          cocoHydro: "5.8 – 6.2 pH (Ideal 6.0)",
         },
         targetEC: "1.2 – 1.6 mS/cm",
-        targetVPD: "1.0 – 1.3 kPa",
-        identifiedMarkers: ["Localized brown speckles", "Marginal necrotic lesions"],
+        targetVPD: "Moderate Airflow & Humidity",
+        identifiedMarkers: ["Small brown speckles on leaves", "Dry leaf edges"],
         pathologyReasoning:
-          "Calcium moves exclusively through xylem transpiration. Restricted root absorption causes localized cell wall breakdown.",
+          "In plain terms: calcium helps build strong leaf walls. When the roots can't drink up enough calcium smoothly, small brown rusty spots show up on the leaves.",
       },
+      journalContextUsed: journalBadges,
       source: "visual-heuristics",
       photosAnalyzed: imagesCount,
     };
   }
 
-  // Chlorosis
   return {
-    condition: "Interveinal Chlorosis / Nitrogen & Iron Mobility Stress",
+    condition: "Hungry Plant — Needs a General Feed (Yellowing Leaves)",
     isHealthy: false,
     healthScore: 64,
     confidence: "High",
     severity: "warning",
-    summary: `Spectral analysis revealed noticeable chlorosis on ${plantName}. Suggests nitrogen mobilization or root-zone lockout.`,
+    summary: `Some of the leaves on ${plantName} (${setting} · ${medium}) are fading to light green or yellow.${feedNote}${waterNote} Your plant is simply running low on everyday plant food (especially nitrogen) or the soil is staying a little too wet between waterings.${trainingNote}`,
     symptoms: [
-      "Light green to yellow fading of leaf tissue between dark veins",
-      "Lower to mid-canopy leaves fading first",
+      "Leaves turning pale green or yellow while the veins stay darker",
+      "Lower, older leaves fading first",
     ],
     possibleCauses: [
-      "Substrate pH drift preventing nitrogen and iron uptake",
-      "Overwatering creating root hypoxia",
+      isLivingSoil || isInGround
+        ? `${plantName} is drawing heavily on its ${medium.toLowerCase()} in the ground and is ready for a top-dress of compost/worm castings or a diluted liquid feed${feedNote}`
+        : `The plant has used up the food in its ${medium} and is ready for a feed${feedNote}`,
+      `Soil staying a bit too wet around the roots${waterNote}`,
     ],
     actionPlan: [
-      `Check root-zone pH: aim for 6.2-6.8 (soil) or 5.8-6.2 (coco).`,
-      "Provide a mild vegetative feed with balanced nitrogen and micronutrients.",
+      isInGround || isLivingSoil
+        ? "Feel the soil 2 inches below the surface with your finger — make sure it feels moist like a wrung-out sponge, not soggy, before watering again."
+        : "Let the top inch (2–3 cm) of soil dry out to the touch before watering again.",
+      isLivingSoil
+        ? `Give ${plantName} a gentle organic boost: top-dress around the base with worm castings/compost or water in one of your saved diluted homemade brews.`
+        : "Give a normal diluted dose of all-purpose or vegetative liquid plant food at your next watering.",
     ],
     preventiveTips: [
-      "Allow the top 2-3 cm of substrate to dry back before irrigating.",
-      "Calibrate digital pH meter regularly.",
+      isInGround
+        ? "In outdoor ground beds, water deeply and less often so the roots stretch deep into the earth."
+        : "Lift the pot to check its weight before watering — if it still feels heavy, wait another day.",
+      "Remove any completely yellow bottom leaves that come off easily.",
     ],
     estimatedRecoveryDays: "4–7 days",
     scientificEvidence: {
-      nutrientMobility: "Mobile Element (Translocates from Lower to Newer Growth)",
+      nutrientMobility: "Starts on Lower / Older Leaves First (Nitrogen)",
       targetPH: { soil: "6.3 – 6.7 pH", cocoHydro: "5.8 – 6.1 pH" },
       targetEC: "1.3 – 1.7 mS/cm",
-      targetVPD: "0.9 – 1.2 kPa",
-      identifiedMarkers: ["Interveinal yellowing", "Lower canopy pigment fade"],
+      targetVPD: "Mild Temp & Humidity",
+      identifiedMarkers: ["Yellowing leaf colour", "Lower leaves fading first"],
       pathologyReasoning:
-        "Plant cannibalizes mobile nitrogen and magnesium from older leaves when root uptake is constrained.",
+        "In plain terms: when a plant runs low on everyday food like nitrogen, it borrows energy from its older bottom leaves to feed the new top growth, causing the lower leaves to turn yellow.",
     },
+    journalContextUsed: journalBadges,
     source: "visual-heuristics",
     photosAnalyzed: imagesCount,
   };
@@ -202,6 +266,7 @@ export async function diagnosePlantPhoto(
     plantName = "",
     stage,
     medium,
+    journalContext,
     metrics,
   } = payload;
 
@@ -251,6 +316,7 @@ export async function diagnosePlantPhoto(
         plantName,
         stage,
         medium,
+        journalContext,
         metrics: validImages[0]?.metrics || metrics,
       }),
     });
@@ -270,128 +336,6 @@ export async function diagnosePlantPhoto(
       err,
     );
     return fallbackBotanicalDiagnosis(payload, validImages.length);
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-export interface DoctorChatContext {
-  plantName?: string;
-  stage?: string;
-  medium?: string;
-  activeCondition?: string;
-  healthScore?: number;
-  severity?: string;
-  lastDiagnosisSummary?: string;
-  actionPlan?: string[];
-  symptoms?: string[];
-}
-
-export interface DoctorChatMessage {
-  id: string;
-  role: "user" | "model";
-  text: string;
-  timestamp: string;
-  source?: "gemini-3.8-flash" | "botanical-knowledge-base";
-}
-
-export interface SendDoctorChatOptions {
-  messages: Array<{ role: "user" | "model"; text: string }>;
-  context?: DoctorChatContext;
-}
-
-function fallbackBotanicalChat(userQuery: string, context?: DoctorChatContext): string {
-  const q = userQuery.toLowerCase();
-  const plant = context?.plantName || "your plant";
-  const stage = context?.stage || "active growth";
-  const medium = context?.medium || "medium";
-
-  if (q.includes("mite") || q.includes("pest") || q.includes("thrip") || q.includes("bug")) {
-    return `### 🌿 Pest Management Protocol for ${plant}
-1. **Quarantine & Inspection:** Use a 30x–60x loupe on lower leaf undersides.
-2. **Vegetative Spray:** Cold-pressed Neem oil (3–5 ml/L) or insecticidal potassium salts applied at lights-off.
-3. **Flower Phase (Safe for Buds):** Citric acid wash or beneficial predatory mites (*Phytoseiulus persimilis*).
-4. **Environment:** Lower grow room temperature below 25°C and elevate humidity to 55–60% to break mite reproduction cycles.`;
-  }
-
-  if (
-    q.includes("ph") ||
-    q.includes("lockout") ||
-    q.includes("cal-mag") ||
-    q.includes("calcium") ||
-    q.includes("ec")
-  ) {
-    const isCoco = medium.toLowerCase().includes("coco");
-    const targetPH = isCoco ? "5.8 – 6.1 pH" : "6.2 – 6.8 pH";
-    return `### 🧪 Substrate pH & Nutrient Calibration for ${plant}
-1. **Target Range for ${medium}:** Maintain input at **${targetPH}**.
-2. **Lockout Check:** Measure runoff EC. If runoff EC exceeds input by >0.6 mS/cm, mineral salts have crystallized in the substrate.
-3. **Remediation:** Flush with 20% volume of mild nutrient water (EC ~0.8) buffered with 1.5 ml/L Cal-Mag at ${targetPH}.`;
-  }
-
-  if (
-    q.includes("water") ||
-    q.includes("droop") ||
-    q.includes("overwater") ||
-    q.includes("underwater")
-  ) {
-    return `### 💧 Irrigation Diagnostic for ${plant}
-1. **Overwatering (Root Hypoxia):** Leaves are firm and curling down like claws; pot feels heavy and waterlogged.
-2. **Underwatering:** Leaves AND leaf stems (petioles) are limp and flaccid; pot feels feather-light.
-3. **Standard:** Always use the container lift test. Allow top 2–3 cm of substrate to dry back between irrigations.`;
-  }
-
-  return `### 👨‍⚕️ GrowBuddy AI Doctor Botanical Consultation
-**Grow Profile:** ${plant} (${stage} in ${medium})
-${context?.activeCondition ? `**Active Diagnosis:** ${context.activeCondition}` : ""}
-
-**Diagnostic Recommendations:**
-1. **Root Zone:** Maintain consistent dryback intervals and verify runoff pH.
-2. **VPD Target:** Maintain ${stage.toLowerCase().includes("flower") ? "1.1 – 1.4 kPa" : "0.8 – 1.1 kPa"} for optimal foliar gas exchange.
-3. Feel free to ask about organic pest treatments, precise N-P-K nutrient feeding charts, or recovery timelines!`;
-}
-
-export async function sendDoctorChatMessage(
-  options: SendDoctorChatOptions,
-): Promise<{ text: string; source: "gemini-3.8-flash" | "botanical-knowledge-base" }> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 7000);
-
-  const latestUserText = [...options.messages].reverse().find((m) => m.role === "user")?.text || "";
-
-  try {
-    const response = await fetch("/api/doctor-chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      signal: controller.signal,
-      body: JSON.stringify(options),
-    });
-
-    if (!response.ok) {
-      console.warn(
-        `Server doctor chat returned status ${response.status}, activating botanical knowledge base.`,
-      );
-      return {
-        text: fallbackBotanicalChat(latestUserText, options.context),
-        source: "botanical-knowledge-base",
-      };
-    }
-
-    return (await response.json()) as {
-      text: string;
-      source: "gemini-3.8-flash" | "botanical-knowledge-base";
-    };
-  } catch (err: unknown) {
-    console.warn(
-      "Doctor chat fetch failed, gracefully falling back to botanical knowledge base:",
-      err,
-    );
-    return {
-      text: fallbackBotanicalChat(latestUserText, options.context),
-      source: "botanical-knowledge-base",
-    };
   } finally {
     clearTimeout(timeoutId);
   }

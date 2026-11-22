@@ -157,8 +157,11 @@ export async function checkWeatherThresholdsAndNotify(
   const plantNamesStr = plantNames.length > 0 ? plantNames.slice(0, 3).join(", ") : "Your Plants";
 
   const h = forecast.hourly;
-  const n = Math.min(48, h.time.length);
+  if (!h || !Array.isArray(h.time) || h.time.length === 0) return [];
   const nowMs = Date.now();
+  const foundIdx = h.time.findIndex((t) => new Date(t).getTime() >= nowMs - 3600_000);
+  const startIdx = foundIdx >= 0 ? foundIdx : 0;
+  const endIdx = Math.min(h.time.length, startIdx + 48);
   const cooldownPeriodMs = 6 * 60 * 60 * 1000; // 6 hour cooldown per alert type to avoid alert fatigue
 
   let cooldownMap: Record<string, number> = {};
@@ -186,8 +189,8 @@ export async function checkWeatherThresholdsAndNotify(
 
   // 1. FROST RISK CHECK (<= frostThresholdC, default 2°C)
   let frostHourIdx = -1;
-  for (let i = 0; i < n; i++) {
-    if (h.temperature_2m[i]! <= settings.frostThresholdC) {
+  for (let i = startIdx; i < endIdx; i++) {
+    if ((h.temperature_2m?.[i] ?? 20) <= settings.frostThresholdC) {
       frostHourIdx = i;
       break;
     }
@@ -224,8 +227,8 @@ export async function checkWeatherThresholdsAndNotify(
   // 2. COLD STRESS CHECK (< coldThresholdC, default 10°C) if no frost already fired
   let coldHourIdx = -1;
   if (frostHourIdx < 0) {
-    for (let i = 0; i < n; i++) {
-      if (h.temperature_2m[i]! < settings.coldThresholdC) {
+    for (let i = startIdx; i < endIdx; i++) {
+      if ((h.temperature_2m?.[i] ?? 20) < settings.coldThresholdC) {
         coldHourIdx = i;
         break;
       }
@@ -262,8 +265,8 @@ export async function checkWeatherThresholdsAndNotify(
 
   // 3. EXTREME HEAT CHECK (>= heatThresholdC, default 32°C)
   let heatHourIdx = -1;
-  for (let i = 0; i < n; i++) {
-    if (h.temperature_2m[i]! >= settings.heatThresholdC) {
+  for (let i = startIdx; i < endIdx; i++) {
+    if ((h.temperature_2m?.[i] ?? 20) >= settings.heatThresholdC) {
       heatHourIdx = i;
       break;
     }
@@ -299,8 +302,8 @@ export async function checkWeatherThresholdsAndNotify(
 
   // 4. HIGH WIND GUSTS CHECK (>= windThresholdKmh, default 50 km/h)
   let windHourIdx = -1;
-  for (let i = 0; i < n; i++) {
-    if (h.wind_gusts_10m[i]! >= settings.windThresholdKmh) {
+  for (let i = startIdx; i < endIdx; i++) {
+    if ((h.wind_gusts_10m?.[i] ?? 0) >= settings.windThresholdKmh) {
       windHourIdx = i;
       break;
     }
@@ -337,8 +340,8 @@ export async function checkWeatherThresholdsAndNotify(
   // 5. HIGH SUSTAINED HUMIDITY / BUD ROT RISK (>= humidityThresholdPercent for 4+ consecutive hours)
   let consecutiveHumidity = 0;
   let moldTriggerHour = -1;
-  for (let i = 0; i < n; i++) {
-    if (h.relative_humidity_2m[i]! >= settings.humidityThresholdPercent) {
+  for (let i = startIdx; i < endIdx; i++) {
+    if ((h.relative_humidity_2m?.[i] ?? 0) >= settings.humidityThresholdPercent) {
       consecutiveHumidity++;
       if (consecutiveHumidity >= 4) {
         moldTriggerHour = i;

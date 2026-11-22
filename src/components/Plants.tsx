@@ -14,9 +14,22 @@ import {
   Scissors,
   SlidersHorizontal,
   Microscope,
+  Loader2,
+  Camera,
+  Upload,
+  X,
+  ZoomIn,
+  Image as ImageIcon,
 } from "lucide-react";
 import { usePlants } from "@/hooks/use-plants";
-import { GrowthMetricsChart } from "@/components/GrowthMetricsChart";
+import {
+  useFertilizers,
+  DILUTION_RATIO_PRESETS,
+  RAW_DOSAGE_PRESETS,
+  type HomemadeFertilizer,
+  type FertilizerForm,
+} from "@/hooks/use-fertilizers";
+import { compressImage, formatDataUrlSize } from "@/lib/photo-utils";
 
 export type { Stage, LogType, Log, Plant } from "@/hooks/use-plants";
 import type { Stage, LogType, Log, Plant } from "@/hooks/use-plants";
@@ -50,6 +63,7 @@ const TECHNIQUES = [
 ];
 const KEY = "canopy-plants-v2";
 const uid = () => Math.random().toString(36).slice(2, 10);
+const today = () => new Date().toISOString().slice(0, 10);
 const days = (d?: string | null) => {
   if (!d) return 0;
   const t = new Date(d).getTime();
@@ -67,54 +81,118 @@ const btn = "rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primar
 const chip = (on: boolean) =>
   `rounded-full border px-3 py-1 text-xs ${on ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground"}`;
 
-function compress(file: File): Promise<string> {
-  return new Promise((res) => {
-    const img = new Image();
-    img.onload = () => {
-      const s = Math.min(1, 720 / Math.max(img.width, img.height));
-      const c = document.createElement("canvas");
-      c.width = img.width * s;
-      c.height = img.height * s;
-      c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
-      res(c.toDataURL("image/jpeg", 0.7));
-    };
-    img.src = URL.createObjectURL(file);
-  });
-}
+function PhotoPick({
+  onPick,
+  label,
+  currentPhoto,
+  onClear,
+  onCompressingChange,
+}: {
+  onPick: (d: string) => void;
+  label: string;
+  currentPhoto?: string | null;
+  onClear?: () => void;
+  compact?: boolean;
+  onCompressingChange?: (busy: boolean) => void;
+}) {
+  const [compressing, setCompressing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-function PhotoPick({ onPick, label }: { onPick: (d: string) => void; label: string }) {
+  const handleFile = async (f?: File) => {
+    if (!f) return;
+    setCompressing(true);
+    onCompressingChange?.(true);
+    setError(null);
+    try {
+      const compressed = await compressImage(f, {
+        maxDimension: 512,
+        quality: 0.6,
+        maxBase64Length: 65000,
+      });
+      if (compressed) {
+        onPick(compressed);
+      } else {
+        setError("Could not read image file.");
+      }
+    } catch (err) {
+      console.error("Failed to compress photo:", err);
+      setError("Failed to optimize photo. Please try another image.");
+    } finally {
+      setCompressing(false);
+      onCompressingChange?.(false);
+    }
+  };
+
   return (
-    <div className="inline-flex items-center gap-2">
-      <label className="rounded-xl border border-dashed px-3 py-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer inline-flex items-center gap-1.5 active:scale-95 transition">
-        <span>{label}</span>
-        <input
-          type="file"
-          accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,.jpg,.jpeg,.png,.webp,.heic,application/octet-stream"
-          className="sr-only"
-          onChange={async (e) => {
-            const f = e.target.files?.[0];
-            if (f) onPick(await compress(f));
-            e.target.value = "";
-          }}
-        />
-      </label>
-      <label
-        title="Take photo with camera"
-        className="rounded-xl border border-primary/30 bg-primary/10 px-2.5 py-2 text-xs font-medium text-primary hover:bg-primary/20 cursor-pointer inline-flex items-center gap-1 active:scale-95 transition"
-      >
-        <span>📷 Camera</span>
-        <input
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="sr-only"
-          onChange={async (e) => {
-            const f = e.target.files?.[0];
-            if (f) onPick(await compress(f));
-            e.target.value = "";
-          }}
-        />
-      </label>
+    <div className="space-y-1">
+      <div className="inline-flex flex-wrap items-center gap-1.5">
+        {/* Gallery / File Picker */}
+        <label
+          className={`rounded-xl border border-dashed border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:border-primary hover:bg-secondary hover:text-foreground cursor-pointer inline-flex items-center gap-1.5 active:scale-95 transition ${
+            compressing ? "opacity-60 pointer-events-none" : ""
+          }`}
+        >
+          {compressing ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+              <span>Optimizing...</span>
+            </>
+          ) : (
+            <>
+              <Upload className="h-3.5 w-3.5 text-muted-foreground" />
+              <span>{label}</span>
+            </>
+          )}
+          <input
+            type="file"
+            accept="image/*,image/jpeg,image/png,image/webp,image/heic,image/heif"
+            disabled={compressing}
+            className="sr-only"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              await handleFile(f);
+              e.target.value = "";
+            }}
+          />
+        </label>
+
+        {/* Camera Snap */}
+        <label
+          title="Take photo with camera"
+          className={`rounded-xl border border-primary/30 bg-primary/10 px-2.5 py-2 text-xs font-medium text-primary hover:bg-primary/20 cursor-pointer inline-flex items-center gap-1.5 active:scale-95 transition ${
+            compressing ? "opacity-60 pointer-events-none" : ""
+          }`}
+        >
+          <Camera className="h-3.5 w-3.5" />
+          <span>Camera</span>
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            disabled={compressing}
+            className="sr-only"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              await handleFile(f);
+              e.target.value = "";
+            }}
+          />
+        </label>
+
+        {/* Optional Clear Button */}
+        {currentPhoto && onClear && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="rounded-xl border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs font-medium text-destructive hover:bg-destructive/20 transition active:scale-95 inline-flex items-center gap-1"
+          >
+            <X className="h-3 w-3" />
+            <span>Remove</span>
+          </button>
+        )}
+      </div>
+
+      {error && <p className="text-[11px] text-destructive">{error}</p>}
     </div>
   );
 }
@@ -131,29 +209,59 @@ export interface PlantsPanelProps {
   } | null;
   onClearExternalLog?: () => void;
   plantsState?: ReturnType<typeof usePlants>;
+  fertilizersState?: ReturnType<typeof useFertilizers>;
   onOpenDoctorForPlant?: (plantId: string) => void;
   onOpenAdviceForPlant?: (
     plantId: string,
-    initialTool?: "advice" | "trichome" | "defoliation" | "lst",
+    initialTool?: "advice" | "visualizer" | "trichome" | "defoliation" | "lst",
   ) => void;
   openedPlantId?: string | null;
   onClosePlant?: () => void;
 }
 
-export function PlantsPanel({
+export function PlantsPanel(props: PlantsPanelProps = {}) {
+  if (props.plantsState && props.fertilizersState) {
+    return (
+      <PlantsPanelContent
+        {...props}
+        plantsState={props.plantsState}
+        fertilizersState={props.fertilizersState}
+      />
+    );
+  }
+  return <PlantsPanelStandalone {...props} />;
+}
+
+function PlantsPanelStandalone(props: PlantsPanelProps) {
+  const internalPlantsState = usePlants(props.currentUser);
+  const internalFertilizersState = useFertilizers(props.currentUser);
+  return (
+    <PlantsPanelContent
+      {...props}
+      plantsState={props.plantsState || internalPlantsState}
+      fertilizersState={props.fertilizersState || internalFertilizersState}
+    />
+  );
+}
+
+function PlantsPanelContent({
   currentUser,
   onOpenAccount,
   externalLog,
   onClearExternalLog,
-  plantsState: externalPlantsState,
+  plantsState,
+  fertilizersState,
   onOpenDoctorForPlant,
   onOpenAdviceForPlant,
   openedPlantId = null,
   onClosePlant,
-}: PlantsPanelProps = {}) {
-  const internalPlantsState = usePlants(currentUser);
-  const { plants, updatePlant, createPlant, deletePlant, addLogToPlants } =
-    externalPlantsState || internalPlantsState;
+}: PlantsPanelProps & {
+  plantsState: ReturnType<typeof usePlants>;
+  fertilizersState: ReturnType<typeof useFertilizers>;
+}) {
+  const { plants, updatePlant, setPlantCover, createPlant, deletePlant, addLogToPlants } =
+    plantsState;
+  const { fertilizers } = fertilizersState;
 
   const [openId, setOpenId] = useState<string | null>(openedPlantId);
   const [adding, setAdding] = useState(false);
@@ -172,7 +280,7 @@ export function PlantsPanel({
     if (externalLog && active.length > 0 && selectedExternalPlantIds.length === 0) {
       setSelectedExternalPlantIds(active.map((p) => p.id));
     }
-  }, [externalLog, active]);
+  }, [externalLog, active, selectedExternalPlantIds.length]);
 
   const handleSaveNew = async (p: Plant) => {
     try {
@@ -217,15 +325,15 @@ export function PlantsPanel({
       <PlantView
         plant={open}
         allPlants={plants}
+        fertilizers={fertilizers}
         back={() => {
           setOpenId(null);
           onClosePlant?.();
         }}
         onChange={(fn) => updatePlant(open.id, fn)}
+        onSetCover={(cover) => setPlantCover(open.id, cover)}
         onDelete={() => {
-          if (confirm(`Delete ${open.name}?`)) {
-            handleDelete(open.id);
-          }
+          void handleDelete(open.id);
         }}
         onOpenDoctor={onOpenDoctorForPlant}
         onOpenAdvice={onOpenAdviceForPlant}
@@ -338,9 +446,6 @@ export function PlantsPanel({
         ))}
       </div>
 
-      {/* 30-Day Growth Rate & Health Metrics Recharts Line Graph */}
-      <GrowthMetricsChart plants={plants} />
-
       <div className="flex items-center justify-between">
         <h2 className="text-2xl">My grows</h2>
         <button className={btn} onClick={() => setAdding(!adding)}>
@@ -363,8 +468,12 @@ export function PlantsPanel({
             className="overflow-hidden rounded-2xl border bg-card text-left"
           >
             <div className="flex aspect-square items-center justify-center bg-secondary text-4xl">
-              {p.cover ? (
-                <img src={p.cover} alt={p.name} className="h-full w-full object-cover" />
+              {p.cover || p.logs?.find((l) => l.photo)?.photo ? (
+                <img
+                  src={p.cover || p.logs?.find((l) => l.photo)?.photo}
+                  alt={p.name}
+                  className="h-full w-full object-cover"
+                />
               ) : (
                 "🌱"
               )}
@@ -452,7 +561,14 @@ function NewPlant({ onSave }: { onSave: (p: Plant) => void }) {
         ))}
       </div>
       <div className="flex flex-wrap gap-2">
-        {["Soil", "Coco", "Hydro", "Living soil"].map((t) => (
+        {[
+          "Soil",
+          "Living soil",
+          "Living soil (In the ground)",
+          "In the ground",
+          "Coco",
+          "Hydro",
+        ].map((t) => (
           <button
             type="button"
             key={t}
@@ -472,12 +588,30 @@ function NewPlant({ onSave }: { onSave: (p: Plant) => void }) {
           onChange={(e) => setF({ ...f, started: e.target.value })}
         />
       </label>
-      <div className="flex items-center gap-3">
-        <PhotoPick
-          label={f.cover ? "Change photo" : "+ Cover photo"}
-          onPick={(cover) => setF({ ...f, cover })}
-        />
-        {f.cover && <img src={f.cover} alt="" className="h-12 w-12 rounded-lg object-cover" />}
+      <div className="space-y-1.5 rounded-xl border border-dashed border-border p-3 bg-secondary/20">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-semibold text-foreground">Cover Photo (Optional)</label>
+          {f.cover && (
+            <span className="text-[10px] font-mono text-primary font-medium">
+              {formatDataUrlSize(f.cover)}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <PhotoPick
+            label={f.cover ? "Change" : "+ Cover photo"}
+            currentPhoto={f.cover}
+            onClear={() => setF((prev) => ({ ...prev, cover: "" }))}
+            onPick={(cover) => setF((prev) => ({ ...prev, cover }))}
+          />
+          {f.cover && (
+            <img
+              src={f.cover}
+              alt="Cover preview"
+              className="h-12 w-12 rounded-lg object-cover border border-primary shrink-0 shadow-xs"
+            />
+          )}
+        </div>
       </div>
       <button className={`${btn} w-full`}>Create journal</button>
     </form>
@@ -486,31 +620,161 @@ function NewPlant({ onSave }: { onSave: (p: Plant) => void }) {
 
 function PlantView({
   plant: p,
-  allPlants = [],
+  fertilizers = [],
   back,
   onChange,
+  onSetCover,
   onDelete,
   onOpenDoctor,
   onOpenAdvice,
 }: {
   plant: Plant;
   allPlants?: Plant[];
+  fertilizers?: HomemadeFertilizer[];
   back: () => void;
-  onChange: (fn: (p: Plant) => Plant) => void;
+  onChange: (fn: (p: Plant) => Plant) => Promise<void> | void;
+  onSetCover?: (cover?: string) => Promise<void> | void;
   onDelete: () => void;
   onOpenDoctor?: (plantId: string) => void;
   onOpenAdvice?: (
     plantId: string,
-    initialTool?: "advice" | "trichome" | "defoliation" | "lst",
+    initialTool?: "advice" | "visualizer" | "trichome" | "defoliation" | "lst",
   ) => void;
 }) {
   const [logType, setLogType] = useState<LogType | null>(null);
   const [view, setView] = useState<"timeline" | "gallery">("timeline");
+  const [lightboxPhoto, setLightboxPhoto] = useState<{
+    url: string;
+    title: string;
+    date?: string;
+    note?: string;
+    isCover?: boolean;
+    logId?: string;
+  } | null>(null);
+  const [coverStatus, setCoverStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [journalStatus, setJournalStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [localCover, setLocalCover] = useState<string | undefined>(p.cover);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  useEffect(() => {
+    setLocalCover(p.cover);
+  }, [p.cover, p.id]);
+
+  const handleUpdateCover = async (newCover?: string) => {
+    const previousCover = localCover;
+    let targetCover = newCover;
+    if (targetCover && targetCover.length > 45000) {
+      try {
+        targetCover = await compressImage(targetCover, {
+          maxDimension: 512,
+          quality: 0.6,
+          maxBase64Length: 65000,
+        });
+      } catch {
+        // Fallback to original
+      }
+    }
+    setLocalCover(targetCover);
+    setCoverStatus("saving");
+    try {
+      if (onSetCover) {
+        await onSetCover(targetCover);
+      } else {
+        await onChange((x) => ({ ...x, cover: targetCover }));
+      }
+      setCoverStatus("saved");
+      setTimeout(() => setCoverStatus("idle"), 2500);
+    } catch (err) {
+      console.error("Failed to update cover photo:", err);
+      setLocalCover(previousCover);
+      setCoverStatus("error");
+      setTimeout(() => setCoverStatus("idle"), 3500);
+    }
+  };
+
+  const handleSaveLogEntry = async (l: Log) => {
+    setJournalStatus("saving");
+    try {
+      let cleanPhoto = l.photo;
+      if (cleanPhoto && cleanPhoto.length > 45000) {
+        try {
+          const compressed = await compressImage(cleanPhoto, {
+            maxDimension: 512,
+            quality: 0.6,
+            maxBase64Length: 65000,
+          });
+          if (compressed) cleanPhoto = compressed;
+        } catch {
+          // keep original
+        }
+      }
+
+      const entryToSave: Log = {
+        ...l,
+        id: l.id || uid(),
+        date: l.date || today(),
+        photo: cleanPhoto,
+      };
+
+      if (cleanPhoto && !localCover) {
+        setLocalCover(cleanPhoto);
+      }
+
+      await onChange((x) => {
+        const currentLogs = Array.isArray(x.logs) ? x.logs : [];
+        if (currentLogs.some((existing) => existing.id === entryToSave.id)) {
+          return x;
+        }
+        const updatedLogs = [entryToSave, ...currentLogs];
+        updatedLogs.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+        return {
+          ...x,
+          cover: x.cover || cleanPhoto || undefined,
+          logs: updatedLogs,
+        };
+      });
+
+      setJournalStatus("saved");
+      setTimeout(() => setJournalStatus("idle"), 3000);
+    } catch (err) {
+      console.error("Failed to save journal entry:", err);
+      setJournalStatus("error");
+      setTimeout(() => setJournalStatus("idle"), 3500);
+    }
+  };
+
   const stageIdx = STAGES.indexOf(p.stage);
   const plantLogs = p.logs || [];
   const lastWater = plantLogs.find((l) => l.type === "water" || l.type === "feed");
   const photos = plantLogs.filter((l) => l.photo);
   const latestHeight = plantLogs.find((l) => l.height)?.height;
+
+  // Group all journal entries from the same day into a single unified day group
+  const groupedLogsByDay = (() => {
+    const map = new Map<string, Log[]>();
+    for (const entry of plantLogs) {
+      const dateKey = entry.date || today();
+      const existing = map.get(dateKey);
+      if (existing) {
+        existing.push(entry);
+      } else {
+        map.set(dateKey, [entry]);
+      }
+    }
+    return Array.from(map.entries())
+      .sort(([dateA], [dateB]) => dateB.localeCompare(dateA))
+      .map(([date, entries]) => {
+        const dayNum = Math.max(
+          1,
+          Math.floor(
+            ((date ? new Date(date).getTime() : Date.now()) -
+              (p.started ? new Date(p.started).getTime() : Date.now())) /
+              86400000,
+          ) + 1,
+        );
+        return { date, dayNum, entries };
+      });
+  })();
 
   return (
     <div className="space-y-4">
@@ -519,13 +783,59 @@ function PlantView({
       </button>
       <div className="overflow-hidden rounded-2xl border bg-card">
         <div className="relative flex aspect-video items-center justify-center bg-secondary text-6xl">
-          {p.cover ? (
-            <img src={p.cover} alt={p.name} className="h-full w-full object-cover" />
+          {localCover ? (
+            <img
+              src={localCover}
+              alt={p.name}
+              className="h-full w-full object-cover cursor-pointer hover:opacity-95 transition"
+              onClick={() =>
+                setLightboxPhoto({
+                  url: localCover!,
+                  title: `${p.name} — Front Cover Photo`,
+                  isCover: true,
+                })
+              }
+            />
           ) : (
             "🌱"
           )}
-          <div className="absolute bottom-2 right-2">
-            <PhotoPick label="📷" onPick={(cover) => onChange((x) => ({ ...x, cover }))} />
+
+          {/* Cover save status badge */}
+          {coverStatus === "saving" && (
+            <div className="absolute top-2 left-2 z-10 flex items-center gap-1.5 rounded-xl bg-black/80 backdrop-blur-xs px-3 py-1.5 text-xs font-semibold text-white shadow">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+              <span>Saving front cover...</span>
+            </div>
+          )}
+          {coverStatus === "saved" && (
+            <div className="absolute top-2 left-2 z-10 flex items-center gap-1.5 rounded-xl bg-emerald-600/95 backdrop-blur-xs px-3 py-1.5 text-xs font-semibold text-white shadow animate-in fade-in">
+              <Check className="h-3.5 w-3.5 stroke-[3]" />
+              <span>Front cover saved!</span>
+            </div>
+          )}
+          {coverStatus === "error" && (
+            <div className="absolute top-2 left-2 z-10 flex items-center gap-1.5 rounded-xl bg-destructive/95 backdrop-blur-xs px-3 py-1.5 text-xs font-semibold text-white shadow animate-in fade-in">
+              <X className="h-3.5 w-3.5 stroke-[3]" />
+              <span>Failed to save front cover</span>
+            </div>
+          )}
+
+          <div className="absolute bottom-2 right-2 flex items-center gap-1.5 rounded-xl bg-black/60 backdrop-blur-xs p-1.5 shadow">
+            <PhotoPick
+              label={localCover ? "Change cover" : "+ Add cover"}
+              onPick={(cover) => handleUpdateCover(cover)}
+            />
+            {localCover && (
+              <button
+                type="button"
+                onClick={() => handleUpdateCover(undefined)}
+                className="rounded-lg bg-red-500/20 px-2.5 py-2 text-xs font-medium text-red-200 hover:bg-red-500/40 transition active:scale-95 inline-flex items-center gap-1"
+                title="Remove cover photo"
+              >
+                <X className="h-3 w-3" />
+                <span>Remove</span>
+              </button>
+            )}
           </div>
         </div>
         <div className="p-4">
@@ -575,10 +885,46 @@ function PlantView({
             onChange={(e) => onChange((x) => ({ ...x, yieldG: e.target.value }))}
           />
         )}
-      </section>
 
-      {/* 30-Day Growth & Health Metrics for this Plant */}
-      <GrowthMetricsChart plants={allPlants.length > 0 ? allPlants : [p]} openedPlantId={p.id} />
+        <div className="mt-4 pt-3 border-t border-border/60 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Growing Medium &amp; Location (Synced to AI Doctor &amp; Coach)
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {(["Outdoor", "Indoor", "Greenhouse"] as const).map((settingOpt) => (
+              <button
+                type="button"
+                key={settingOpt}
+                className={chip(p.setting === settingOpt)}
+                onClick={() => onChange((x) => ({ ...x, setting: settingOpt }))}
+              >
+                {settingOpt}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              "Soil",
+              "Living soil",
+              "Living soil (In the ground)",
+              "In the ground",
+              "Coco",
+              "Hydro",
+            ].map((medOpt) => (
+              <button
+                type="button"
+                key={medOpt}
+                className={chip(p.medium.toLowerCase() === medOpt.toLowerCase())}
+                onClick={() => onChange((x) => ({ ...x, medium: medOpt }))}
+              >
+                {medOpt}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {/* Direct AI Tools: Health Doctor & Grow Advice for this plant */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -701,6 +1047,30 @@ function PlantView({
             </button>
           </div>
         )}
+
+        {onOpenAdvice && (
+          <div className="rounded-2xl border border-primary/45 bg-primary/10 p-4 flex flex-col justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">AI Growth Stage Visualizer</p>
+                <p className="text-xs text-muted-foreground">
+                  Seedling, Veg &amp; Flower photos + daily growth collage
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenAdvice(p.id, "visualizer")}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition shadow-sm active:scale-95"
+            >
+              <span>Preview Stages &amp; Collage</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
       </div>
 
       <section>
@@ -719,94 +1089,331 @@ function PlantView({
         </div>
         {logType && (
           <LogForm
+            key={logType}
             type={logType}
+            fertilizers={fertilizers}
             onSave={(l) => {
-              onChange((x) => {
-                const currentLogs = Array.isArray(x.logs) ? x.logs : [];
-                const updatedLogs = [l, ...currentLogs];
-                updatedLogs.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-                return {
-                  ...x,
-                  logs: updatedLogs,
-                };
-              });
               setLogType(null);
+              void handleSaveLogEntry(l);
             }}
           />
         )}
       </section>
 
-      <section>
-        <div className="mb-2 flex gap-2">
-          <button className={chip(view === "timeline")} onClick={() => setView("timeline")}>
-            Timeline
-          </button>
-          <button className={chip(view === "gallery")} onClick={() => setView("gallery")}>
-            Gallery ({photos.length})
-          </button>
+      <section className="space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex gap-2">
+            <button className={chip(view === "timeline")} onClick={() => setView("timeline")}>
+              Timeline ({plantLogs.length})
+            </button>
+            <button className={chip(view === "gallery")} onClick={() => setView("gallery")}>
+              Gallery ({photos.length})
+            </button>
+          </div>
+
+          {/* 1-Tap Direct Photo Add to Journal */}
+          <PhotoPick
+            label="+ Quick Photo"
+            onPick={(photo) => {
+              void handleSaveLogEntry({
+                id: uid(),
+                date: today(),
+                type: "photo",
+                photo,
+                note: `${p.name} journal snapshot`,
+              });
+            }}
+          />
         </div>
+
+        {journalStatus === "saving" && (
+          <div className="flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary">
+            <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+            <span>Saving to {p.name} journal...</span>
+          </div>
+        )}
+        {journalStatus === "saved" && (
+          <div className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-xs font-semibold text-emerald-600 dark:text-emerald-300 animate-in fade-in">
+            <Check className="h-3.5 w-3.5 stroke-[3] shrink-0" />
+            <span>Saved to {p.name} journal!</span>
+          </div>
+        )}
+        {journalStatus === "error" && (
+          <div className="flex items-center gap-2 rounded-xl border border-destructive/40 bg-destructive/15 px-3 py-2 text-xs font-semibold text-destructive animate-in fade-in">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            <span>Saved locally — cloud sync will retry automatically.</span>
+          </div>
+        )}
         {view === "gallery" ? (
-          <div className="grid grid-cols-3 gap-1">
-            {photos.map((l) => (
-              <img
-                key={l.id}
-                src={l.photo}
-                alt=""
-                className="aspect-square w-full rounded-lg object-cover"
-              />
-            ))}
-            {!photos.length && (
-              <p className="col-span-3 text-sm text-muted-foreground">No photos yet.</p>
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+              {localCover && (
+                <div
+                  className="relative group aspect-square rounded-xl overflow-hidden border-2 border-primary cursor-pointer shadow-xs bg-secondary"
+                  onClick={() =>
+                    setLightboxPhoto({
+                      url: localCover!,
+                      title: `${p.name} — Cover Photo`,
+                      isCover: true,
+                    })
+                  }
+                >
+                  <img
+                    src={localCover}
+                    alt="Cover"
+                    className="h-full w-full object-cover group-hover:scale-105 transition duration-200"
+                  />
+                  <span className="absolute bottom-1 left-1 rounded-md bg-black/80 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                    ⭐ Cover
+                  </span>
+                </div>
+              )}
+              {photos.map((l) => (
+                <div
+                  key={l.id}
+                  className="relative group aspect-square rounded-xl overflow-hidden border border-border cursor-pointer bg-secondary shadow-xs hover:border-primary transition"
+                  onClick={() =>
+                    setLightboxPhoto({
+                      url: l.photo!,
+                      title: `${LOGS[l.type].label} Entry`,
+                      date: l.date,
+                      note: l.note,
+                      logId: l.id,
+                    })
+                  }
+                >
+                  <img
+                    src={l.photo}
+                    alt={l.note || "Journal photo"}
+                    className="h-full w-full object-cover group-hover:scale-105 transition duration-200"
+                  />
+                  <span className="absolute bottom-1 right-1 rounded-md bg-black/75 px-1.5 py-0.5 text-[9px] font-mono text-white">
+                    {l.date ? l.date.slice(5) : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {!photos.length && !localCover && (
+              <div className="rounded-2xl border border-dashed border-border p-8 text-center text-xs text-muted-foreground">
+                <ImageIcon className="mx-auto h-8 w-8 mb-2 opacity-40 text-primary" />
+                <p className="font-medium text-foreground">No photos in this journal yet</p>
+                <p className="mt-1">
+                  Add a photo to any journal entry above or snap with your camera.
+                </p>
+              </div>
             )}
           </div>
         ) : (
-          <ol className="relative space-y-3 border-l pl-4">
-            {plantLogs.map((l) => (
-              <li key={l.id} className="relative">
-                <span className="absolute -left-[1.6rem] top-1 flex h-6 w-6 items-center justify-center rounded-full bg-card text-xs">
-                  {LOGS[l.type].icon}
-                </span>
-                <div className="rounded-xl bg-card p-3 text-sm">
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span className="font-semibold text-foreground">{LOGS[l.type].label}</span>
-                    <span>
-                      {l.date ? new Date(l.date).toLocaleDateString() : "Today"} · D
-                      {Math.max(
-                        1,
-                        Math.floor(
-                          ((l.date ? new Date(l.date).getTime() : Date.now()) -
-                            (p.started ? new Date(p.started).getTime() : Date.now())) /
-                            86400000,
-                        ) + 1,
-                      )}
-                    </span>
+          <ol className="relative space-y-3 border-l border-border/70 pl-4">
+            {groupedLogsByDay.map((dayGroup) => {
+              const uniqueIcons = Array.from(
+                new Set(dayGroup.entries.map((e) => LOGS[e.type].icon)),
+              );
+              const formattedDate = dayGroup.date
+                ? new Date(dayGroup.date).toLocaleDateString(undefined, {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })
+                : "Today";
+
+              return (
+                <li
+                  key={dayGroup.date}
+                  data-testid={`journal-day-group-${dayGroup.date}`}
+                  className="relative"
+                >
+                  <span className="absolute -left-[1.6rem] top-2.5 flex h-6 w-6 items-center justify-center rounded-full border border-primary/40 bg-card text-[10px] font-bold text-primary shadow-2xs">
+                    D{dayGroup.dayNum}
+                  </span>
+
+                  <div className="rounded-xl bg-card border border-border/60 shadow-xs overflow-hidden">
+                    {/* Unified Daily Header */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/50 bg-secondary/40 px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-foreground">{formattedDate}</span>
+                        <span className="rounded-md bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                          Day {dayGroup.dayNum}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span className="flex items-center gap-0.5">
+                          {uniqueIcons.map((ic, idx) => (
+                            <span key={`${ic}-${idx}`}>{ic}</span>
+                          ))}
+                        </span>
+                        <span className="font-medium">
+                          {dayGroup.entries.length}{" "}
+                          {dayGroup.entries.length === 1 ? "action" : "actions"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Grouped Entries for this Day */}
+                    <div className="divide-y divide-border/40">
+                      {dayGroup.entries.map((l) => (
+                        <div
+                          key={l.id}
+                          className="p-2.5 text-sm hover:bg-secondary/15 transition flex items-start justify-between gap-3"
+                        >
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="inline-flex items-center gap-1 font-semibold text-xs text-foreground">
+                                <span>{LOGS[l.type].icon}</span>
+                                <span>{LOGS[l.type].label}</span>
+                              </span>
+                              <Details l={l} />
+                            </div>
+
+                            {l.note && (
+                              <p className="text-xs text-foreground/90 leading-relaxed">{l.note}</p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            {l.photo && (
+                              <div
+                                className="relative group h-12 w-12 cursor-pointer rounded-lg overflow-hidden border border-border shadow-2xs shrink-0"
+                                onClick={() =>
+                                  setLightboxPhoto({
+                                    url: l.photo!,
+                                    title: `${LOGS[l.type].label} Entry`,
+                                    date: l.date,
+                                    note: l.note,
+                                    logId: l.id,
+                                  })
+                                }
+                                title="Click to enlarge photo"
+                              >
+                                <img
+                                  src={l.photo}
+                                  alt="Log attachment"
+                                  className="h-full w-full object-cover group-hover:scale-105 transition"
+                                />
+                                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
+                                  <ZoomIn className="h-3.5 w-3.5 text-white" />
+                                </div>
+                              </div>
+                            )}
+
+                            <button
+                              type="button"
+                              aria-label="Delete entry"
+                              title="Delete entry"
+                              className="rounded-md px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-destructive/15 hover:text-destructive transition"
+                              onClick={() =>
+                                onChange((x) => ({
+                                  ...x,
+                                  logs: (x.logs || []).filter((y) => y.id !== l.id),
+                                }))
+                              }
+                            >
+                              Delete entry
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <Details l={l} />
-                  {l.photo && <img src={l.photo} alt="" className="mt-2 w-full rounded-lg" />}
-                  {l.note && <p className="mt-1">{l.note}</p>}
-                  <button
-                    className="mt-1 text-xs text-muted-foreground"
-                    onClick={() =>
-                      onChange((x) => ({
-                        ...x,
-                        logs: (x.logs || []).filter((y) => y.id !== l.id),
-                      }))
-                    }
-                  >
-                    Remove
-                  </button>
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
             {!plantLogs.length && (
               <p className="text-sm text-muted-foreground">Nothing logged yet.</p>
             )}
           </ol>
         )}
       </section>
-      <button onClick={onDelete} className="text-xs text-destructive">
-        Delete plant
-      </button>
+
+      {confirmDelete ? (
+        <div className="flex items-center gap-2 rounded-xl border border-destructive/40 bg-destructive/10 p-3">
+          <span className="text-xs font-medium text-foreground">
+            Delete <strong>{p.name}</strong> and all its journal entries?
+          </span>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="rounded-lg bg-destructive px-3 py-1 text-xs font-semibold text-white hover:bg-destructive/90 transition"
+          >
+            Yes, delete
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmDelete(false)}
+            className="rounded-lg bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground transition"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setConfirmDelete(true)}
+          className="text-xs text-destructive hover:underline"
+        >
+          Delete plant
+        </button>
+      )}
+
+      {/* Interactive Photo Lightbox Modal */}
+      {lightboxPhoto && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          onClick={() => setLightboxPhoto(null)}
+        >
+          <div
+            className="relative max-w-2xl w-full rounded-2xl bg-card border border-border overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-3.5 border-b border-border bg-secondary/40">
+              <div>
+                <h4 className="text-sm font-semibold text-foreground">{lightboxPhoto.title}</h4>
+                {lightboxPhoto.date && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {new Date(lightboxPhoto.date).toLocaleDateString()}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setLightboxPhoto(null)}
+                className="rounded-lg p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto bg-black/95 flex items-center justify-center p-3 min-h-[280px]">
+              <img
+                src={lightboxPhoto.url}
+                alt="Enlarged"
+                className="max-h-[60vh] w-auto max-w-full object-contain rounded-lg"
+              />
+            </div>
+
+            <div className="p-3.5 border-t border-border bg-card flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs text-muted-foreground max-w-md">
+                {lightboxPhoto.note || "No note attached"}
+              </div>
+              {!lightboxPhoto.isCover && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await handleUpdateCover(lightboxPhoto.url);
+                    setLightboxPhoto(null);
+                  }}
+                  className="rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition active:scale-95 shadow-sm inline-flex items-center gap-1.5"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Set as Front Cover</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -824,15 +1431,19 @@ function Details({ l }: { l: Log }) {
     l.ph && `pH ${l.ph}`,
     l.ec && `EC ${l.ec}`,
     l.nutrients,
+    l.fertilizerForm && `${l.fertilizerForm}${l.dilutionRatio ? ` (${l.dilutionRatio})` : ""}`,
     l.technique,
     l.temp && `${l.temp}°C`,
     l.humidity && `${l.humidity}% RH`,
     l.height && `${l.height} cm`,
   ].filter(Boolean);
   return parts.length ? (
-    <div className="mt-1 flex flex-wrap gap-1">
-      {parts.map((x) => (
-        <span key={x as string} className="rounded-full bg-secondary px-2 py-0.5 text-xs">
+    <div className="flex flex-wrap gap-1">
+      {parts.map((x, idx) => (
+        <span
+          key={`${x as string}-${idx}`}
+          className="rounded-full bg-secondary px-2 py-0.5 text-xs"
+        >
           {x}
         </span>
       ))}
@@ -840,39 +1451,297 @@ function Details({ l }: { l: Log }) {
   ) : null;
 }
 
-function LogForm({ type, onSave }: { type: LogType; onSave: (l: Log) => void }) {
+function LogForm({
+  type,
+  fertilizers = [],
+  onSave,
+}: {
+  type: LogType;
+  fertilizers?: HomemadeFertilizer[];
+  onSave: (l: Log) => void;
+}) {
   const [l, setL] = useState<Log>({ id: uid(), date: today(), type });
-  const set = (k: keyof Log) => (e: { target: { value: string } }) =>
-    setL((prev) => ({ ...prev, [k]: e.target.value }));
-  return (
-    <form
-      className="mt-3 space-y-2 rounded-2xl border bg-card p-4"
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSave({
-          ...l,
-          id: l.id || uid(),
-          date: l.date || today(),
+  const [selectedFertilizerId, setSelectedFertilizerId] = useState<string>("");
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [isCompressingPhoto, setIsCompressingPhoto] = useState(false);
+
+  const savedRef = useRef(false);
+  const latestLogRef = useRef<Log>(l);
+  const onSaveRef = useRef(onSave);
+
+  useEffect(() => {
+    latestLogRef.current = l;
+  }, [l]);
+
+  useEffect(() => {
+    onSaveRef.current = onSave;
+  }, [onSave]);
+
+  // If the user picked a photo in LogForm and then navigates away or closes the form
+  // without clicking the bottom Save button, auto-save the pending photo log so it is never lost.
+  useEffect(() => {
+    return () => {
+      if (!savedRef.current && latestLogRef.current.photo) {
+        savedRef.current = true;
+        onSaveRef.current({
+          ...latestLogRef.current,
+          id: latestLogRef.current.id || uid(),
+          date: latestLogRef.current.date || today(),
           type,
         });
-      }}
+      }
+    };
+  }, [type]);
+
+  const set = (k: keyof Log) => (e: { target: { value: string } }) =>
+    setL((prev) => ({ ...prev, [k]: e.target.value }));
+
+  const handleSelectSavedFertilizer = (f: HomemadeFertilizer) => {
+    setSelectedFertilizerId(f.id);
+    setL((prev) => ({
+      ...prev,
+      nutrients: `${f.name} (${f.fertilizerType})`,
+      fertilizerForm: f.form,
+      dilutionRatio:
+        f.dilutionRatio ||
+        (f.form === "Diluted" ? "1:10 (100ml/L)" : "Straight drench (undiluted)"),
+    }));
+  };
+
+  const selectedFertilizer = fertilizers.find((f) => f.id === selectedFertilizerId);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isCompressingPhoto) return;
+    if (type === "photo" && !l.photo && (!l.note || !l.note.trim())) {
+      setValidationError("Please take or choose a photo (or write a quick observation note).");
+      return;
+    }
+    setValidationError(null);
+    savedRef.current = true;
+    onSave({
+      ...l,
+      id: l.id || uid(),
+      date: l.date || today(),
+      type,
+    });
+  };
+
+  return (
+    <form
+      className="mt-3 space-y-3 rounded-2xl border bg-card p-4 shadow-sm"
+      onSubmit={handleSubmit}
     >
-      <input className={input} type="date" value={l.date} onChange={set("date")} />
+      <div className="flex items-center justify-between border-b pb-2">
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+          <span>{LOGS[type].icon}</span>
+          <span>Log {LOGS[type].label}</span>
+        </span>
+        <input
+          className="rounded-lg border bg-secondary px-2.5 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
+          type="date"
+          value={l.date}
+          onChange={set("date")}
+        />
+      </div>
+
       {(type === "water" || type === "feed") && (
         <div className="grid grid-cols-3 gap-2">
           <input
             className={input}
             inputMode="decimal"
             placeholder="Litres"
+            value={l.amount ?? ""}
             onChange={set("amount")}
           />
-          <input className={input} inputMode="decimal" placeholder="pH" onChange={set("ph")} />
-          <input className={input} inputMode="decimal" placeholder="EC" onChange={set("ec")} />
+          <input
+            className={input}
+            inputMode="decimal"
+            placeholder="pH"
+            value={l.ph ?? ""}
+            onChange={set("ph")}
+          />
+          <input
+            className={input}
+            inputMode="decimal"
+            placeholder="EC"
+            value={l.ec ?? ""}
+            onChange={set("ec")}
+          />
         </div>
       )}
+
       {type === "feed" && (
-        <input className={input} placeholder="Nutrients & doses" onChange={set("nutrients")} />
+        <div className="space-y-2.5">
+          {/* Dropdown Menu to choose from the user's Fertilizer Journal */}
+          <div className="space-y-1.5">
+            <label
+              htmlFor="journal-fertilizer-select"
+              className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center justify-between"
+            >
+              <span>Choose from Fertilizer Journal</span>
+              <span className="text-[10px] font-normal lowercase">
+                {fertilizers.length} {fertilizers.length === 1 ? "fertilizer" : "fertilizers"} saved
+              </span>
+            </label>
+            <select
+              id="journal-fertilizer-select"
+              aria-label="Choose from Fertilizer Journal"
+              value={selectedFertilizerId}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSelectedFertilizerId(val);
+                if (!val) {
+                  return;
+                }
+                const found = fertilizers.find((f) => f.id === val);
+                if (found) {
+                  handleSelectSavedFertilizer(found);
+                }
+              }}
+              className={`${input} cursor-pointer`}
+            >
+              <option value="" className="bg-card text-foreground">
+                {fertilizers.length > 0
+                  ? `-- Select a fertilizer from your Fertilizer Journal (${fertilizers.length}) --`
+                  : "-- No fertilizers in Fertilizer Journal yet (type custom below) --"}
+              </option>
+              {fertilizers.map((f) => (
+                <option key={f.id} value={f.id} className="bg-card text-foreground">
+                  {f.name} — {f.form}
+                  {f.dilutionRatio ? ` (${f.dilutionRatio})` : ""} · {f.fertilizerType}
+                </option>
+              ))}
+            </select>
+
+            {selectedFertilizer && (
+              <div className="rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="font-semibold text-foreground">{selectedFertilizer.name}</span>{" "}
+                  <span className="text-muted-foreground">
+                    ({selectedFertilizer.fertilizerType})
+                  </span>
+                  {selectedFertilizer.ingredients && (
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Ingredients: {selectedFertilizer.ingredients}
+                    </p>
+                  )}
+                </div>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                    selectedFertilizer.form === "Raw"
+                      ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                      : "bg-sky-500/20 text-sky-300 border border-sky-500/40"
+                  }`}
+                >
+                  {selectedFertilizer.form}
+                  {selectedFertilizer.dilutionRatio ? ` · ${selectedFertilizer.dilutionRatio}` : ""}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <input
+            className={input}
+            placeholder="Nutrients / fertilizer name (or edit selected above)"
+            value={l.nutrients ?? ""}
+            onChange={(e) => {
+              const nextVal = e.target.value;
+              setL((prev) => ({ ...prev, nutrients: nextVal }));
+              if (
+                selectedFertilizer &&
+                nextVal !== `${selectedFertilizer.name} (${selectedFertilizer.fertilizerType})`
+              ) {
+                setSelectedFertilizerId("");
+              }
+            }}
+          />
+
+          <div className="rounded-xl border border-border bg-secondary/30 p-2.5 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-foreground">
+                Fertilizer Form (Raw vs. Diluted)
+              </span>
+              {l.fertilizerForm && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setL((prev) => ({
+                      ...prev,
+                      fertilizerForm: undefined,
+                      dilutionRatio: undefined,
+                    }))
+                  }
+                  className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {(["Raw", "Diluted"] as FertilizerForm[]).map((option) => {
+                const activeForm = l.fertilizerForm === option;
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() =>
+                      setL((prev) => ({
+                        ...prev,
+                        fertilizerForm: option,
+                      }))
+                    }
+                    className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                      activeForm
+                        ? option === "Raw"
+                          ? "border-amber-500 bg-amber-500/20 text-amber-300"
+                          : "border-sky-500 bg-sky-500/20 text-sky-300"
+                        : "border-border bg-secondary text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {option === "Raw" ? "Raw (Undiluted / Straight)" : "Diluted (Mixed w/ Water)"}
+                  </button>
+                );
+              })}
+            </div>
+
+            {l.fertilizerForm && (
+              <div className="space-y-1.5 pt-1">
+                <input
+                  className={input}
+                  placeholder={
+                    l.fertilizerForm === "Diluted"
+                      ? "Dilution ratio (e.g. 1:500 or 2 ml/L)"
+                      : "Raw dose (e.g. Undiluted top-dress, 2 tbsp/pot)"
+                  }
+                  value={l.dilutionRatio ?? ""}
+                  onChange={set("dilutionRatio")}
+                />
+                <div className="flex flex-wrap gap-1">
+                  {(l.fertilizerForm === "Diluted"
+                    ? DILUTION_RATIO_PRESETS
+                    : RAW_DOSAGE_PRESETS
+                  ).map((preset) => (
+                    <button
+                      type="button"
+                      key={preset}
+                      onClick={() => setL((prev) => ({ ...prev, dilutionRatio: preset }))}
+                      className={`rounded-md border px-2 py-0.5 text-[10px] font-medium transition ${
+                        l.dilutionRatio === preset
+                          ? "border-primary bg-primary/20 text-primary"
+                          : "border-border bg-secondary text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
+
       {type === "training" && (
         <div className="flex flex-wrap gap-2">
           {TECHNIQUES.map((t) => (
@@ -880,46 +1749,103 @@ function LogForm({ type, onSave }: { type: LogType; onSave: (l: Log) => void }) 
               type="button"
               key={t}
               className={chip(l.technique === t)}
-              onClick={() => setL({ ...l, technique: t })}
+              onClick={() => setL((prev) => ({ ...prev, technique: t }))}
             >
               {t}
             </button>
           ))}
         </div>
       )}
+
       {type === "environment" && (
         <div className="grid grid-cols-3 gap-2">
           <input
             className={input}
             inputMode="decimal"
             placeholder="Temp °C"
+            value={l.temp ?? ""}
             onChange={set("temp")}
           />
           <input
             className={input}
             inputMode="decimal"
             placeholder="RH %"
+            value={l.humidity ?? ""}
             onChange={set("humidity")}
           />
           <input
             className={input}
             inputMode="decimal"
             placeholder="Height cm"
+            value={l.height ?? ""}
             onChange={set("height")}
           />
         </div>
       )}
-      {type === "photo" && (
+
+      {/* Photo Attachment (Prominent for 'photo' type, optional for all entries) */}
+      <div
+        className={`rounded-xl border border-dashed p-3 space-y-2 transition ${
+          type === "photo" ? "border-primary/40 bg-primary/5" : "border-border bg-secondary/30"
+        }`}
+      >
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+            <Camera className="h-3.5 w-3.5 text-primary" />
+            <span>{type === "photo" ? "Plant Photo (Required)" : "Attach Photo (Optional)"}</span>
+          </span>
+          {l.photo && (
+            <span className="text-[10px] font-mono text-primary font-medium">
+              {formatDataUrlSize(l.photo)}
+            </span>
+          )}
+        </div>
+
         <div className="flex items-center gap-3">
           <PhotoPick
-            label={l.photo ? "Change photo" : "Choose photo"}
-            onPick={(photo) => setL({ ...l, photo })}
+            label={l.photo ? "Change photo" : type === "photo" ? "Choose photo" : "Add photo"}
+            currentPhoto={l.photo}
+            onCompressingChange={setIsCompressingPhoto}
+            onClear={() => setL((prev) => ({ ...prev, photo: undefined }))}
+            onPick={(photo) => {
+              setL((prev) => ({ ...prev, photo }));
+              setValidationError(null);
+            }}
           />
-          {l.photo && <img src={l.photo} alt="" className="h-14 w-14 rounded-lg object-cover" />}
+          {l.photo && (
+            <div className="relative group shrink-0 flex items-center gap-2">
+              <img
+                src={l.photo}
+                alt="Log snapshot"
+                className="h-14 w-14 rounded-xl object-cover border-2 border-primary shadow-xs"
+              />
+              <span className="text-[11px] font-semibold text-primary">✓ Ready to save</span>
+            </div>
+          )}
         </div>
-      )}
-      <textarea className={input} rows={2} placeholder="Notes" onChange={set("note")} />
-      <button className={`${btn} w-full`}>Save {LOGS[type].label.toLowerCase()}</button>
+      </div>
+
+      <textarea
+        className={input}
+        rows={2}
+        placeholder={
+          type === "photo"
+            ? "Visual observations, leaf vigor, trichome stage..."
+            : "Notes & observations (optional)..."
+        }
+        value={l.note ?? ""}
+        onChange={set("note")}
+      />
+
+      {validationError && <p className="text-xs text-destructive font-medium">{validationError}</p>}
+
+      <button
+        type="submit"
+        disabled={isCompressingPhoto}
+        className={`${btn} w-full shadow-sm disabled:opacity-50`}
+      >
+        {isCompressingPhoto ? "Optimizing photo..." : `Save ${LOGS[type].label.toLowerCase()}`}
+      </button>
     </form>
   );
 }

@@ -1,15 +1,16 @@
-import "../dist/server/index.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
 async function postbuild() {
-  const ssr = globalThis.__nitro_vite_envs__?.ssr;
-  if (!ssr) {
-    console.error("SSR service not found on globalThis.__nitro_vite_envs__");
-    process.exit(1);
-  }
-
   try {
+    const ssrMod = await import("../dist/server/_ssr/ssr.mjs");
+    const ssr = ssrMod.default ?? ssrMod;
+
+    if (!ssr || typeof ssr.fetch !== "function") {
+      console.error("SSR fetch handler not found in ../dist/server/_ssr/ssr.mjs");
+      process.exit(1);
+    }
+
     const res = await ssr.fetch(new Request("http://localhost:3000/"));
     const html = await res.text();
     const distDir = path.resolve("dist");
@@ -29,6 +30,7 @@ async function postbuild() {
         html.length +
         " bytes)",
     );
+    process.exit(0);
   } catch (err) {
     console.error("Failed to prerender index.html:", err);
     process.exit(1);

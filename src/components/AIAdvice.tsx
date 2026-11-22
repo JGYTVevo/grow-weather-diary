@@ -1,9 +1,12 @@
 import React, { useState, useRef, useEffect } from "react";
 import { getPlantAdvice, type PlantAdviceResult, type ImageAnalysisMetrics } from "@/lib/advice";
 import type { Plant, Stage } from "@/hooks/use-plants";
+import type { HomemadeFertilizer } from "@/hooks/use-fertilizers";
+import { buildPlantJournalSummary } from "@/lib/journal-context";
 import { DefoliationAnalyzer } from "@/components/DefoliationAnalyzer";
 import { LSTSlider } from "@/components/LSTSlider";
 import { TrichomeScanner } from "@/components/TrichomeScanner";
+import { GrowthVisualizer } from "@/components/GrowthVisualizer";
 import {
   Camera,
   Upload,
@@ -187,17 +190,18 @@ function getProgressStage(seconds: number) {
   };
 }
 
-export type AdviceToolMode = "advice" | "trichome" | "defoliation" | "lst";
+export type AdviceToolMode = "advice" | "visualizer" | "trichome" | "defoliation" | "lst";
 
 interface AIAdviceProps {
   plants: Plant[];
+  fertilizers?: HomemadeFertilizer[];
   initialSelectedPlantId?: string | null;
   initialTool?: AdviceToolMode;
   onToolChange?: (tool: AdviceToolMode) => void;
   onLogToPlant?: (
     plantIds: string[],
     logData: {
-      type: "training" | "water" | "feed" | "note";
+      type: "training" | "water" | "feed" | "note" | "photo";
       note: string;
       photo?: string;
       amount?: string;
@@ -211,6 +215,7 @@ interface AIAdviceProps {
 
 export function AIAdvice({
   plants,
+  fertilizers = [],
   initialSelectedPlantId,
   initialTool,
   onToolChange,
@@ -242,7 +247,9 @@ export function AIAdvice({
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
 
   // Context settings
-  const [selectedPlantId, setSelectedPlantId] = useState<string>(initialSelectedPlantId || "");
+  const [selectedPlantId, setSelectedPlantId] = useState<string>(
+    initialSelectedPlantId || (plants[0]?.id ?? ""),
+  );
   const [stageContext, setStageContext] = useState<string>("Vegetative");
   const [mediumContext, setMediumContext] = useState<string>("Soil");
   const [typeContext, setTypeContext] = useState<string>("Photoperiod");
@@ -254,17 +261,26 @@ export function AIAdvice({
   const [selectedScan, setSelectedScan] = useState<SavedAdviceScan | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  // Sync with selected plant if provided
+  useEffect(() => {
+    if (initialSelectedPlantId && plants.some((p) => p.id === initialSelectedPlantId)) {
+      setSelectedPlantId(initialSelectedPlantId);
+    } else if (!selectedPlantId && plants.length > 0) {
+      setSelectedPlantId(plants[0]!.id);
+    }
+  }, [initialSelectedPlantId, plants, selectedPlantId]);
+
+  // Sync with selected plant's journal
   useEffect(() => {
     if (selectedPlantId) {
       const match = plants.find((p) => p.id === selectedPlantId);
       if (match) {
+        const summary = buildPlantJournalSummary(match, fertilizers);
         setStageContext(match.stage);
-        setMediumContext(match.medium || "Soil");
+        setMediumContext(summary.medium);
         setTypeContext(match.type || "Photoperiod");
       }
     }
-  }, [selectedPlantId, plants]);
+  }, [selectedPlantId, plants, fertilizers]);
 
   // Load history from localStorage
   useEffect(() => {
@@ -383,6 +399,9 @@ export function AIAdvice({
     setActionSuccessMsg(null);
 
     const matchedPlant = plants.find((p) => p.id === selectedPlantId);
+    const journalSummary = matchedPlant
+      ? buildPlantJournalSummary(matchedPlant, fertilizers)
+      : null;
     const plantName = matchedPlant
       ? `${matchedPlant.name} (${matchedPlant.strain || "Plant"})`
       : "Grow Plant";
@@ -395,7 +414,29 @@ export function AIAdvice({
         stage: stageContext,
         medium: mediumContext,
         plantType: typeContext,
-        plantInfo: growerNotes,
+        plantInfo: journalSummary ? `${growerNotes}\n${journalSummary.promptBlock}` : growerNotes,
+        journalContext: journalSummary
+          ? {
+              plantId: journalSummary.plantId,
+              plantName: journalSummary.plantName,
+              strain: journalSummary.strain,
+              plantType: journalSummary.plantType,
+              setting: journalSummary.setting,
+              medium: mediumContext || journalSummary.medium,
+              stage: stageContext || journalSummary.stage,
+              ageDays: journalSummary.ageDays,
+              stageDays: journalSummary.stageDays,
+              isLivingSoil:
+                journalSummary.isLivingSoil || mediumContext.toLowerCase().includes("living"),
+              isInGround:
+                journalSummary.isInGround || mediumContext.toLowerCase().includes("ground"),
+              recentWaterSummary: journalSummary.recentWaterSummary,
+              recentFeedsSummary: journalSummary.recentFeedsSummary,
+              trainingSummary: journalSummary.trainingSummary,
+              journalContextBadges: journalSummary.journalContextBadges,
+              promptBlock: journalSummary.promptBlock,
+            }
+          : undefined,
         metrics: metrics || undefined,
       });
 
@@ -492,6 +533,19 @@ export function AIAdvice({
         </button>
         <button
           type="button"
+          onClick={() => handleSwitchTool("visualizer")}
+          data-testid="advice-tab-visualizer"
+          className={`flex-1 min-w-[102px] py-2 px-1.5 sm:px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+            activeTool === "visualizer"
+              ? "bg-card text-foreground shadow-xs border border-border/80"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Sparkles className="h-3.5 w-3.5 text-primary" />
+          <span>Visualizer</span>
+        </button>
+        <button
+          type="button"
           onClick={() => handleSwitchTool("trichome")}
           className={`flex-1 min-w-[85px] py-2 px-1.5 sm:px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
             activeTool === "trichome"
@@ -528,7 +582,15 @@ export function AIAdvice({
         </button>
       </div>
 
-      {activeTool === "trichome" ? (
+      {activeTool === "visualizer" ? (
+        <GrowthVisualizer
+          plants={plants}
+          fertilizers={fertilizers}
+          initialSelectedPlantId={selectedPlantId}
+          onLogToPlant={onLogToPlant}
+          onNavigateToPlant={onNavigateToPlant}
+        />
+      ) : activeTool === "trichome" ? (
         <TrichomeScanner
           plants={plants}
           initialSelectedPlantId={selectedPlantId}
@@ -631,11 +693,11 @@ export function AIAdvice({
 
           {/* Linked Plant Selector */}
           {plants.length > 0 && !currentResult && (
-            <div className="rounded-2xl border border-border bg-card p-4 space-y-2.5">
+            <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                   <Layers className="h-3.5 w-3.5 text-primary" />
-                  <span>Target Plant (Optional)</span>
+                  <span>Linked Plant Journal</span>
                 </span>
                 {selectedPlantId && (
                   <button
@@ -647,7 +709,8 @@ export function AIAdvice({
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                Connect to one of your saved plants to auto-fill its genetics, medium, and stage:
+                Select a plant to automatically link its journal (living soil / ground setup,
+                training, feeding, and watering logs):
               </p>
               <div className="flex flex-wrap gap-2">
                 {plants.map((p) => {
@@ -667,11 +730,63 @@ export function AIAdvice({
                         {isSelected ? "✓" : ""}
                       </span>
                       <span>{p.name}</span>
-                      <span className="text-[10px] text-muted-foreground">({p.stage})</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        ({p.medium} · {p.stage})
+                      </span>
                     </button>
                   );
                 })}
               </div>
+
+              {(() => {
+                const matchedPlant = plants.find((p) => p.id === selectedPlantId);
+                if (!matchedPlant) return null;
+                const summary = buildPlantJournalSummary(matchedPlant, fertilizers);
+                return (
+                  <div
+                    data-testid="advice-linked-journal-card"
+                    className="rounded-xl border border-primary/30 bg-primary/5 p-3 space-y-2 text-xs"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold text-primary flex items-center gap-1.5">
+                        <BookOpen className="h-3.5 w-3.5" />
+                        <span>
+                          Synced with {summary.plantName}&apos;s Journal ({summary.setting} ·{" "}
+                          {summary.medium})
+                        </span>
+                      </span>
+                      {summary.latestPhoto && !photo && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPhoto(summary.latestPhoto!);
+                            setMetrics({
+                              healthyGreenRatio: 0.72,
+                              yellowRatio: 0.08,
+                              brownRatio: 0.03,
+                            });
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90 transition"
+                        >
+                          <Camera className="h-3 w-3" />
+                          <span>Use Latest Photo from Journal</span>
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 text-[11px]">
+                      <span className="rounded-md bg-card px-2 py-0.5 border border-border">
+                        {summary.trainingSummary}
+                      </span>
+                      <span className="rounded-md bg-card px-2 py-0.5 border border-border">
+                        {summary.recentWaterSummary}
+                      </span>
+                      <span className="rounded-md bg-card px-2 py-0.5 border border-border">
+                        {summary.recentFeedsSummary}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -746,14 +861,21 @@ export function AIAdvice({
                         <span className="text-[10px] text-primary">{stageContext}</span>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        {["Seedling", "Vegetative", "Early Bloom", "Late Bloom"].map((s) => (
+                        {[
+                          "Germination",
+                          "Seedling",
+                          "Vegetative",
+                          "Flowering",
+                          "Early Bloom",
+                          "Late Bloom",
+                        ].map((s) => (
                           <button
                             key={s}
                             type="button"
                             onClick={() => setStageContext(s)}
                             disabled={loading}
                             className={`rounded-full border px-3 py-1 text-xs transition ${
-                              stageContext === s
+                              stageContext.toLowerCase() === s.toLowerCase()
                                 ? "border-primary bg-primary text-primary-foreground font-semibold"
                                 : "border-border text-muted-foreground hover:bg-secondary"
                             } disabled:opacity-60`}
@@ -766,7 +888,7 @@ export function AIAdvice({
                       <div className="grid grid-cols-2 gap-3 pt-1">
                         <div>
                           <label className="text-xs font-semibold text-muted-foreground block mb-1">
-                            Growing Medium
+                            Growing Medium / Ground Setup
                           </label>
                           <select
                             value={mediumContext}
@@ -775,9 +897,13 @@ export function AIAdvice({
                             className="w-full rounded-xl border border-border bg-secondary px-3 py-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
                           >
                             <option value="Soil">Soil</option>
+                            <option value="Living Soil">Living Soil / No-Till</option>
+                            <option value="Living Soil (In the Ground)">
+                              Living Soil (In the Ground)
+                            </option>
+                            <option value="In the Ground">In the Ground</option>
                             <option value="Coco Coir">Coco Coir</option>
                             <option value="Hydro / DWC">Hydro / DWC</option>
-                            <option value="Living Soil">Living Soil / No-Till</option>
                           </select>
                         </div>
 

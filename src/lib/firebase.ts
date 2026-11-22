@@ -25,13 +25,21 @@ import firebaseConfig from "../../firebase-applet-config.json";
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
 // CRITICAL: Must pass firestoreDatabaseId and ignoreUndefinedProperties
-export const db = initializeFirestore(
-  app,
-  {
-    ignoreUndefinedProperties: true,
-  },
-  firebaseConfig.firestoreDatabaseId,
-);
+function createFirestoreInstance() {
+  try {
+    return initializeFirestore(
+      app,
+      {
+        ignoreUndefinedProperties: true,
+      },
+      firebaseConfig.firestoreDatabaseId,
+    );
+  } catch {
+    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
+}
+
+export const db = createFirestoreInstance();
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
@@ -49,14 +57,14 @@ export interface FirestoreErrorInfo {
   operationType: OperationType;
   path: string | null;
   authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
+    userId?: string | null | undefined;
+    email?: string | null | undefined;
+    emailVerified?: boolean | null | undefined;
+    isAnonymous?: boolean | null | undefined;
+    tenantId?: string | null | undefined;
     providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
+      providerId?: string | null | undefined;
+      email?: string | null | undefined;
     }[];
   };
 }
@@ -101,20 +109,24 @@ export async function loginWithGoogle(): Promise<FirebaseUser | null> {
   try {
     const result = await signInWithPopup(auth, googleProvider);
     if (result.user) {
-      // Sync user profile to Firestore
-      const userRef = doc(db, "users", result.user.uid);
-      await setDoc(
-        userRef,
-        {
-          id: result.user.uid,
-          email: result.user.email || "",
-          displayName: result.user.displayName || "Gardener",
-          photoURL: result.user.photoURL || "",
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true },
-      );
+      // Sync user profile to Firestore without blocking sign-in if profile write fails
+      try {
+        const userRef = doc(db, "users", result.user.uid);
+        await setDoc(
+          userRef,
+          {
+            id: result.user.uid,
+            email: result.user.email || `${result.user.uid}@user.local`,
+            displayName: result.user.displayName || "Gardener",
+            photoURL: result.user.photoURL || "",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true },
+        );
+      } catch (profileErr) {
+        console.warn("User profile sync warning:", profileErr);
+      }
     }
     return result.user;
   } catch (err) {

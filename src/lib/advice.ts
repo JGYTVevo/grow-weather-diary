@@ -1,3 +1,5 @@
+import type { LinkedJournalContextPayload } from "@/server/diagnose";
+
 export interface ImageAnalysisMetrics {
   averageBrightness?: number;
   greenRatio?: number;
@@ -54,6 +56,7 @@ export interface PlantAdviceResult {
   nutrients: NutrientsAdvice;
   watering: WateringAdvice;
   keyActionToday: string;
+  journalContextUsed?: string[] | undefined;
   source?: "gemini-3.8-flash" | "visual-heuristics";
 }
 
@@ -65,6 +68,7 @@ export interface AdvicePlantOptions {
   stage?: string;
   medium?: string;
   plantType?: "Photoperiod" | "Autoflower" | string;
+  journalContext?: LinkedJournalContextPayload;
   metrics?: ImageAnalysisMetrics;
 }
 
@@ -152,6 +156,7 @@ export async function getPlantAdvice(payload: AdvicePlantOptions): Promise<Plant
     stage,
     medium,
     plantType,
+    journalContext,
     metrics,
   } = payload;
 
@@ -178,6 +183,7 @@ export async function getPlantAdvice(payload: AdvicePlantOptions): Promise<Plant
         stage,
         medium,
         plantType,
+        journalContext,
         metrics,
       }),
     });

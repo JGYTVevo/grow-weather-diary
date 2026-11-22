@@ -48,6 +48,24 @@ export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
       const url = new URL(request.url);
+      if (url.pathname === "/healthz" || url.pathname === "/api/health") {
+        return Response.json({ status: "ok" });
+      }
+      if (url.pathname === "/api/weather" && request.method === "GET") {
+        try {
+          const { handleWeatherRequest } = await import("./server/weather");
+          const lat = parseFloat(url.searchParams.get("lat") ?? "-36.85");
+          const lon = parseFloat(url.searchParams.get("lon") ?? "174.76");
+          const result = await handleWeatherRequest(lat, lon);
+          return Response.json(result);
+        } catch (err: unknown) {
+          console.error("SSR /api/weather error:", err);
+          return Response.json(
+            { error: err instanceof Error ? err.message : String(err) },
+            { status: 502 },
+          );
+        }
+      }
       if (url.pathname === "/api/diagnose-plant" && request.method === "POST") {
         try {
           const { handleDiagnosePlant } = await import("./server/diagnose");
@@ -108,14 +126,32 @@ export default {
         }
       }
 
-      if (url.pathname === "/api/doctor-chat" && request.method === "POST") {
+      if (url.pathname === "/api/growth-visualize" && request.method === "POST") {
         try {
-          const { handleDoctorChat } = await import("./server/doctor-chat");
+          const { handleGrowthVisualize } = await import("./server/growth-visualizer");
           const payload = await request.json();
-          const result = await handleDoctorChat(payload);
+          const result = await handleGrowthVisualize(payload);
           return Response.json(result);
         } catch (err: unknown) {
-          console.error("SSR /api/doctor-chat error:", err);
+          console.error("SSR /api/growth-visualize error:", err);
+          return Response.json(
+            { error: err instanceof Error ? err.message : String(err) },
+            { status: 500 },
+          );
+        }
+      }
+
+      if (
+        (url.pathname === "/api/grow-chat" || url.pathname === "/api/ai-assistant") &&
+        request.method === "POST"
+      ) {
+        try {
+          const { handleGrowChat } = await import("./server/grow-chat");
+          const payload = await request.json();
+          const result = await handleGrowChat(payload);
+          return Response.json(result);
+        } catch (err: unknown) {
+          console.error(`SSR ${url.pathname} error:`, err);
           return Response.json(
             { error: err instanceof Error ? err.message : String(err) },
             { status: 500 },

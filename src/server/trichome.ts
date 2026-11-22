@@ -139,18 +139,30 @@ export function evaluateTrichomeHeuristics(payload: TrichomeRequestPayload): Tri
     estimatedDaysToHarvest = "5 – 7 days";
   }
 
+  const mediumLower = (payload.medium || "").toLowerCase();
+  const isLivingSoil = mediumLower.includes("living") || mediumLower.includes("organic");
+  const isInGround = mediumLower.includes("ground") || mediumLower.includes("bed");
+
   const flushRecommendation = {
     status: flushStatus,
     waterType:
       flushStatus === "Continue Feeding"
-        ? "Scheduled Bloom Nutrients"
-        : "pH-balanced RO/Plain Water (pH 6.2 - 6.5)",
+        ? isLivingSoil
+          ? "Organic Bloom Top-Dress / Compost Tea"
+          : "Scheduled Bloom Nutrients"
+        : isLivingSoil
+          ? "Dechlorinated Plain Water Only (No Pot Flush Needed)"
+          : "pH-balanced RO/Plain Water (pH 6.2 - 6.5)",
     advice:
       flushStatus === "Continue Feeding"
-        ? "Nutrient feeding should continue at full bloom strength with Phosphorus & Potassium."
-        : flushStatus === "Begin Plain Water Flush"
-          ? "Begin flushing media with pure water to allow plant to mobilize stored chlorophyll and carbohydrates."
-          : "Substrate should be dried back comfortably prior to the dark period chop.",
+        ? isLivingSoil
+          ? `Keep ${plantName}'s living soil${isInGround ? " ground bed" : ""} evenly moist and feed organic bloom teas/top-dressings.`
+          : "Nutrient feeding should continue at full bloom strength with Phosphorus & Potassium."
+        : isLivingSoil
+          ? `Because ${plantName} is in ${payload.medium || "Living Soil"}${isInGround ? " in the ground" : ""}, do NOT flood or flush the soil — simply give plain dechlorinated water so the plant naturally fades while soil microbes stay alive.`
+          : flushStatus === "Begin Plain Water Flush"
+            ? "Begin flushing media with pure water to allow plant to mobilize stored chlorophyll and carbohydrates."
+            : "Substrate should be dried back comfortably prior to the dark period chop.",
   };
 
   const keyActionToday = harvestWindowStatus.includes("Too Early")
@@ -159,10 +171,12 @@ export function evaluateTrichomeHeuristics(payload: TrichomeRequestPayload): Tri
       ? `Harvest window is open for ${plantName} (${cloudy}% cloudy, ${amber}% amber). Plan chop within 24 to 72 hours.`
       : harvestWindowStatus.includes("Sedative")
         ? `Harvest ${plantName} immediately if you want maximum heavy body couch-lock relief (${amber}% amber).`
-        : `Initiate plain water flush on ${plantName} and monitor trichome heads daily with a loupe.`;
+        : isLivingSoil
+          ? `Switch ${plantName} to plain dechlorinated water only (no heavy flushing needed in living soil) and check trichomes daily.`
+          : `Initiate plain water flush on ${plantName} and monitor trichome heads daily with a loupe.`;
 
   return {
-    summary: `${plantName} shows ${cloudy}% cloudy, ${amber}% amber, and ${clear}% clear trichomes with ${pistils}% pistil curl. Harvest window status is ${harvestWindowStatus}.`,
+    summary: `${plantName} (${payload.medium || "Soil"}) shows ${cloudy}% cloudy, ${amber}% amber, and ${clear}% clear trichomes with ${pistils}% pistil curl. Harvest window status is ${harvestWindowStatus}.`,
     clearPercent: clear,
     cloudyPercent: cloudy,
     amberPercent: amber,
@@ -194,27 +208,29 @@ export async function handleTrichomeScan(payload: TrichomeRequestPayload): Promi
     stage = "Late Flower",
     strain = "Cannabis",
     flowerWeek = "Week 8 Flower",
+    medium = "Soil",
   } = payload;
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env["GEMINI_API_KEY"];
   const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z+]+;base64,/, "").trim();
 
   if (!cleanBase64) {
     throw new Error("No image data provided for trichome analysis.");
   }
 
-  // Attempt Gemini 3.8 Flash with 3.5s timeout for fast, zero-stall response
-  if (apiKey) {
+  const isRealPhoto = cleanBase64.length > 250;
+
+  // Attempt Gemini 3.1 Flash Lite with 3.5s timeout for fast, zero-stall response
+  if (apiKey && isRealPhoto) {
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => {
       abortController.abort();
-    }, 3500);
+    }, 9000);
 
     const ai = new GoogleGenAI({
       apiKey,
       httpOptions: {
         headers: { "User-Agent": "aistudio-build" },
-        signal: abortController.signal,
       },
     });
 
@@ -231,16 +247,17 @@ Assess the resin glands on the bud calyxes (ignore outer sugar leaf tips as they
 
 Cultivar / Plant: "${plantName}" (${strain})
 Current Stage / Week: "${stage}" (${flowerWeek})
+Growing Medium: "${medium}" (Note: if Living Soil or In the Ground, recommend plain dechlorinated water only to preserve soil microbes rather than heavy pot flushing)
 
 Return strict JSON adhering to the schema.`;
 
     try {
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Gemini trichome scan timed out after 3.5s")), 3500),
+        setTimeout(() => reject(new Error("Gemini trichome scan timed out after 9s")), 9000),
       );
 
       const geminiPromise = ai.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: "gemini-3-flash-preview",
         contents: [
           {
             role: "user",
@@ -256,6 +273,7 @@ Return strict JSON adhering to the schema.`;
           },
         ],
         config: {
+          abortSignal: abortController.signal,
           systemInstruction:
             "You are GrowBuddy AI Harvest & Trichome Specialist. Return precise percentages and practical harvest timing in strict JSON.",
           responseMimeType: "application/json",

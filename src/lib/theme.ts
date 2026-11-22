@@ -43,7 +43,7 @@ export function applyTheme(theme: Theme): void {
   // Sync mobile status bar theme-color
   const metaThemeColor = document.querySelector('meta[name="theme-color"]');
   if (metaThemeColor) {
-    metaThemeColor.setAttribute("content", resolved === "dark" ? "#142618" : "#f7fdf9");
+    metaThemeColor.setAttribute("content", resolved === "dark" ? "#0f2922" : "#fefcf3");
   }
 }
 
@@ -84,6 +84,7 @@ export function useTheme() {
       media.addEventListener("change", handler);
       return () => media.removeEventListener("change", handler);
     }
+    return undefined;
   }, [theme]);
 
   return {

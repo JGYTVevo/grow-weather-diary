@@ -1,4 +1,4 @@
-const CACHE_NAME = "canopy-cache-v1";
+const CACHE_NAME = "canopy-cache-v4";
 const PRECACHE_URLS = [
   "/",
   "/manifest.json",
@@ -36,7 +36,12 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
-  // For API calls to Open-Meteo, try network first then cache
+  // Never intercept POST/non-GET requests or backend /api/* endpoints
+  if (event.request.method !== "GET" || url.pathname.startsWith("/api/")) {
+    return;
+  }
+
+  // For API calls to Open-Meteo, try network first then cache (never resolve to undefined)
   if (url.origin.includes("open-meteo.com")) {
     event.respondWith(
       fetch(event.request)
@@ -47,7 +52,16 @@ self.addEventListener("fetch", (event) => {
           }
           return response;
         })
-        .catch(() => caches.match(event.request)),
+        .catch(async () => {
+          const cached = await caches.match(event.request);
+          return (
+            cached ||
+            new Response(JSON.stringify({ error: "Weather offline" }), {
+              status: 503,
+              headers: { "Content-Type": "application/json" },
+            })
+          );
+        }),
     );
     return;
   }
@@ -58,7 +72,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Stale-while-revalidate for static assets
+  // Stale-while-revalidate for static GET assets only
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       const fetchPromise = fetch(event.request)

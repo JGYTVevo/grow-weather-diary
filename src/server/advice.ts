@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import type { LinkedJournalContextPayload } from "@/server/diagnose";
 
 export interface ImageAnalysisMetrics {
   averageBrightness?: number;
@@ -56,6 +57,7 @@ export interface PlantAdviceResult {
   nutrients: NutrientsAdvice;
   watering: WateringAdvice;
   keyActionToday: string;
+  journalContextUsed?: string[] | undefined;
   source?: "gemini-3.8-flash" | "visual-heuristics";
 }
 
@@ -67,6 +69,7 @@ export interface AdviceRequestPayload {
   stage?: string;
   medium?: string;
   plantType?: "Photoperiod" | "Autoflower" | string;
+  journalContext?: LinkedJournalContextPayload;
   metrics?: ImageAnalysisMetrics;
 }
 
@@ -80,11 +83,26 @@ function evaluateAdviceFromVisualMetrics(payload: AdviceRequestPayload): PlantAd
   const darkGreen = m.darkGreenRatio ?? 0.06;
   const brightness = m.averageBrightness ?? 130;
 
-  const plantName = payload.plantName || "Your Plant";
-  const stage = payload.stage || "Vegetative";
-  const medium = payload.medium || "Soil";
-  const plantType = payload.plantType || "Photoperiod";
+  const jc = payload.journalContext;
+  const plantName = jc?.plantName || payload.plantName || "Your Plant";
+  const stage = jc?.stage || payload.stage || "Vegetative";
+  const medium = jc?.medium || payload.medium || "Soil";
+  const plantType = jc?.plantType || payload.plantType || "Photoperiod";
   const isAuto = plantType.toLowerCase().includes("auto");
+
+  const combinedLower =
+    `${medium} ${payload.plantInfo || ""} ${jc?.promptBlock || ""}`.toLowerCase();
+  const isLivingSoil = Boolean(
+    jc?.isLivingSoil || combinedLower.includes("living soil") || combinedLower.includes("no-till"),
+  );
+  const isInGround = Boolean(
+    jc?.isInGround ||
+    combinedLower.includes("in the ground") ||
+    combinedLower.includes("in ground"),
+  );
+  const alreadyTopped = Boolean(
+    jc?.trainingSummary?.toLowerCase().includes("topping") || combinedLower.includes("topping"),
+  );
 
   const isSeedling =
     stage.toLowerCase().includes("seedling") || stage.toLowerCase().includes("germination");
@@ -173,21 +191,26 @@ function evaluateAdviceFromVisualMetrics(payload: AdviceRequestPayload): PlantAd
     // Veg: Ideal LST
     lst = {
       recommended: true,
-      timing: "Begin immediately during active vegetative growth",
-      stemFlexibility: "High flexibility; soft green cambium layer",
+      timing:
+        jc?.trainingSummary && !jc.trainingSummary.includes("Untrained")
+          ? `Continue maintaining your ${jc.trainingSummary} tie-downs as new shoots stretch`
+          : "Begin immediately during active vegetative growth",
+      stemFlexibility: "High flexibility; soft green stems",
       steps: [
-        "Step 1: Anchor the base of the main stalk with a tie pulling in the opposite direction (prevents root dislocation)",
-        "Step 2: Gently bend the top of the stalk down at an 80°–90° angle parallel to the container rim",
-        "Step 3: Secure the bent tip with soft rubber-coated garden tie or rim clips",
-        "Step 4: Expose secondary lower branches to vertical light; they will rise as equal primary shoots within 48h",
+        "Step 1: Anchor the base of the main stalk with a soft tie pulling in the opposite direction to steady the roots",
+        isInGround
+          ? "Step 2: Gently bend the taller branches outward and secure them to wooden garden stakes or ground pegs pushed into the soil bed"
+          : "Step 2: Gently bend the top of the stalk down at an 80°–90° angle parallel to the container rim",
+        isInGround
+          ? "Step 3: Space the branches evenly in a circle so outdoor sun and breeze reach the middle of the plant"
+          : "Step 3: Secure the bent tip with soft rubber-coated garden tie or rim clips",
+        "Step 4: Expose lower side branches to direct light so they grow up into even main tops",
       ],
-      toolsNeeded: [
-        "Rubber-coated plant training wire",
-        "Container rim clips or binder clips",
-        "Soft ties",
-      ],
+      toolsNeeded: isInGround
+        ? ["Soft rubber-coated plant wire", "Bamboo stakes or ground pegs", "Garden twine"]
+        : ["Rubber-coated plant training wire", "Container rim clips or binder clips", "Soft ties"],
       canopyGoal:
-        "Redistribute auxin hormones from the apical tip to create a flat, multi-top table canopy",
+        "Spread the branches into a wide, flat canopy so every top gets equal light and airflow",
     };
   }
 
@@ -195,109 +218,141 @@ function evaluateAdviceFromVisualMetrics(payload: AdviceRequestPayload): PlantAd
   let nutrients: NutrientsAdvice;
   const isYellowing = yellow > 0.16;
   const isHighGreen = darkGreen > 0.12;
+  const feedContextSuffix = jc?.recentFeedsSummary ? ` (Journal: ${jc.recentFeedsSummary})` : "";
 
   if (isYellowing) {
     nutrients = {
       action: "light_feed",
-      headline: `Nitrogen & Micronutrient Boost Needed for ${stage}`,
-      stageRecommendation: `Observed pale foliage (${Math.round(yellow * 100)}% chlorosis). Increase available Nitrogen (N) and check pH balance immediately.`,
-      targetEC: medium.toLowerCase().includes("soil") ? "1.2 - 1.4 mS/cm" : "1.4 - 1.6 mS/cm",
+      headline: isLivingSoil
+        ? `Organic Top-Dress or Brew Needed for ${stage}`
+        : `Gentle Nutrient Boost Needed for ${stage}`,
+      stageRecommendation: `Observed pale leaves (${Math.round(yellow * 100)}% yellowing).${feedContextSuffix} ${
+        isLivingSoil
+          ? `Boost your ${medium} with worm castings, compost, or a diluted organic tea.`
+          : "Increase available plant food (Nitrogen & Cal-Mag) and check water pH."
+      }`,
+      targetEC: isLivingSoil
+        ? "Organic Brew / Top-Dress (1.0 - 1.4 mS/cm)"
+        : medium.toLowerCase().includes("soil")
+          ? "1.2 - 1.4 mS/cm"
+          : "1.4 - 1.6 mS/cm",
       targetPH: medium.toLowerCase().includes("soil") ? "6.2 - 6.6 pH" : "5.8 - 6.1 pH",
       signsObserved: [
-        "Light green to yellowing leaf tissue indicating nitrogen mobilization",
-        "Lower to middle canopy fading faster than top growth",
-        "Normal to slightly slowed vegetative vigor",
+        "Light green to yellowing leaf colour indicating the plant is hungry",
+        "Lower to middle leaves fading faster than top growth",
+        ...(jc?.recentFeedsSummary ? [`Journal feed log: ${jc.recentFeedsSummary}`] : []),
       ],
-      nextFeedSuggestion:
-        "Feed with balanced vegetative nutrients containing N-P-K (higher N) + 1.5ml/L Cal-Mag at next irrigation",
+      nextFeedSuggestion: isLivingSoil
+        ? "Water in one of your saved diluted homemade brews (e.g. nettle, comfrey, or worm tea) or top-dress with rich compost around the stem."
+        : "Feed with balanced vegetative nutrients containing N-P-K + 1.5ml/L Cal-Mag at next watering.",
     };
   } else if (isHighGreen) {
     nutrients = {
       action: "plain_water",
-      headline: "High Nitrogen Levels Detected - Hold Heavy Feed",
-      stageRecommendation:
-        "Foliage is deep forest green with high pigment density. Ease off Nitrogen to prevent leaf tip curling/clawing.",
-      targetEC: "0.8 - 1.0 mS/cm (reduce strength by 30%)",
+      headline: "Rich Leaf Colour — Plain Water Next",
+      stageRecommendation: `Leaves are deep lush green.${feedContextSuffix} Give plain water on the next watering so you don't overfeed.`,
+      targetEC: "0.8 - 1.0 mS/cm (or plain water)",
       targetPH: medium.toLowerCase().includes("soil") ? "6.3 - 6.7 pH" : "5.8 - 6.2 pH",
       signsObserved: [
-        "Deep emerald to dark forest green color",
-        "High chlorophyll density across foliage",
-        "Potential risk of nitrogen toxicity clawing if feed continues at current rate",
+        "Deep emerald to dark green leaf colour",
+        "Plenty of stored nitrogen in the leaves",
       ],
-      nextFeedSuggestion:
-        "Give plain pH-balanced water with enzymes or microbial inoculant on the next cycle",
+      nextFeedSuggestion: isLivingSoil
+        ? "Water with plain dechlorinated water or a light microbe/molasses tea only."
+        : "Give plain pH-balanced water on the next watering cycle.",
     };
   } else {
     // Balanced
     nutrients = {
       action: "optimal",
-      headline: `Maintain Steady ${stage} Nutritional Regime`,
+      headline: `Keep Up Your Steady ${stage} Routine`,
       stageRecommendation: isBloom
-        ? "Shift ratio to Bloom N-P-K (Lower Nitrogen, higher Phosphorus and Potassium for dense floral development)."
-        : "Maintain balanced Vegetative N-P-K formula with silica and calcium-magnesium.",
-      targetEC: isBloom ? "1.6 - 2.0 mS/cm" : "1.2 - 1.5 mS/cm",
+        ? `Continue Bloom feeding for ${medium} (focus on potassium & phosphorus for flower swell).${feedContextSuffix}`
+        : `Maintain your balanced ${stage} nutrition in ${medium}.${feedContextSuffix}`,
+      targetEC: isLivingSoil
+        ? "Living Soil Web (Organic Teas / Mulch)"
+        : isBloom
+          ? "1.6 - 2.0 mS/cm"
+          : "1.2 - 1.5 mS/cm",
       targetPH: medium.toLowerCase().includes("soil") ? "6.2 - 6.8 pH" : "5.8 - 6.2 pH",
       signsObserved: [
-        "Lush uniform green coloration across leaves",
-        "Healthy leaf turgor and upward prayer angle",
-        "No severe tip burn or chlorotic interveinal banding",
+        "Lush, even green colour across the leaves",
+        "Healthy perky leaves reaching toward the light",
+        ...(jc?.recentFeedsSummary ? [`Synced feed history: ${jc.recentFeedsSummary}`] : []),
       ],
-      nextFeedSuggestion: `Continue scheduled ${stage} feed at normal dilution rate according to manufacturer chart`,
+      nextFeedSuggestion: isLivingSoil
+        ? `Keep your ${medium} moist so soil microbes keep breaking down organic food; apply your diluted homemade brews every 7–10 days.`
+        : `Continue scheduled ${stage} feed at your normal dilution rate.`,
     };
   }
 
   // --- 4. WATERING & HYDRATION EVALUATION ---
   let watering: WateringAdvice;
+  const waterContextSuffix = jc?.recentWaterSummary ? ` (${jc.recentWaterSummary})` : "";
   if (yellow > 0.22 && brightness < 110) {
     watering = {
       status: "overwatered",
-      headline: "Root Hypoxia / Excess Moisture Signs",
-      indicator:
-        "Foliar droop combined with pale discoloration indicates saturated root zone lacking oxygen exchange",
-      liftCheckAdvice:
-        "Lift container: if it feels heavy and waterlogged, DO NOT water. Allow substrate to dry back thoroughly",
-      knuckleTest: "Top 4-5 cm of soil must feel dry and crumbly before next application",
-      nextWaterWindow:
-        "Hold all watering for at least 48 to 72 hours until container feels significantly lighter",
+      headline: "Soil Staying Too Wet — Let It Breathe",
+      indicator: `Slightly droopy leaves suggest the roots in your ${medium} need more air${waterContextSuffix}`,
+      liftCheckAdvice: isInGround
+        ? "Since this plant is in the ground, check drainage around the bed and hold off on hose watering until the top 4–5 cm feels dry."
+        : "Lift the pot: if it feels heavy and full of water, wait before watering again.",
+      knuckleTest:
+        "Push your finger 4–5 cm (two knuckles) into the soil — wait until it feels dry and crumbly.",
+      nextWaterWindow: "Wait 48 to 72 hours before watering again so the roots get fresh oxygen.",
     };
   } else if (brown > 0.08 || brightness > 155) {
     watering = {
       status: "needs_water",
-      headline: "Irrigation Due Soon / Active Transpiration",
-      indicator: "Leaves show slight dry curling or high transpiration rates under ambient light",
-      liftCheckAdvice:
-        "Perform container lift test: if pot feels feather-light, irrigate immediately",
-      knuckleTest: "Top 2–3 cm is dry to the touch with slight separation from pot edges",
-      nextWaterWindow:
-        "Water within 6 to 12 hours with 10–15% runoff to prevent mineral salt crystallization",
+      headline: `Ready for a Good Watering Soon`,
+      indicator: `Leaves are working hard in the light and ready for fresh moisture in ${medium}${waterContextSuffix}`,
+      liftCheckAdvice: isInGround
+        ? "Pull back the mulch layer and feel the earth 2 inches down — if it feels dry, give a deep soak around the drip-line."
+        : "Lift the pot: if it feels light, give a thorough watering today.",
+      knuckleTest: "Top 2–3 cm of soil is dry to the touch.",
+      nextWaterWindow: "Water within the next 6 to 12 hours (ideally morning or evening).",
     };
   } else {
     watering = {
       status: "optimal",
-      headline: "Optimal Foliar Turgor & Moisture Balance",
-      indicator:
-        "Leaves are upright, praying toward the light source with excellent cell wall turgor pressure",
-      liftCheckAdvice:
-        "Substrate has comfortable moisture retention; container feels medium weight",
-      knuckleTest: "Top layer has healthy moisture without standing soggy water",
-      nextWaterWindow:
-        "Next watering estimated in 24 to 36 hours based on current transpiration rate",
+      headline: "Happy Moisture Balance",
+      indicator: `Leaves are perky and upright with healthy moisture in your ${medium}${waterContextSuffix}`,
+      liftCheckAdvice: isInGround
+        ? "Ground soil under the mulch has comfortable, even moisture."
+        : "Pot feels medium weight with comfortable moisture retention.",
+      knuckleTest: "Top inch of soil feels lightly moist like a wrung-out sponge, not soggy.",
+      nextWaterWindow: "Check again in 24 to 36 hours before your next watering.",
     };
   }
 
-  const keyActionToday = topping.recommended
-    ? `Top ${plantName} above the 4th/5th node with sanitized shears, then begin gentle LST tie-downs in 48 hours.`
-    : lst.recommended
-      ? `Apply gentle Low-Stress Training (LST) ties to flatten the canopy and bring lower branches up to light level.`
-      : `Maintain current watering and nutrition schedule; monitor dryback before next irrigation.`;
+  if (alreadyTopped && topping.recommended) {
+    topping.status = "Already Topped (Maintain Multi-Top Canopy)";
+    topping.timing =
+      "Your journal shows this plant was already topped — only top secondary shoots if you want bushier branching";
+  }
+
+  const keyActionToday =
+    topping.recommended && !alreadyTopped
+      ? `Top ${plantName} cleanly above the 4th/5th node, then spread branches gently with LST ties.`
+      : lst.recommended
+        ? `Spread ${plantName}'s branches gently with LST ${isInGround ? "ground stakes/ties" : "ties"} to open the middle of the plant to light and airflow.`
+        : `Keep up your ${medium} watering and feeding rhythm; check soil moisture with your finger before the next water.`;
+
+  const journalBadges = jc?.journalContextBadges || [
+    `🌱 ${plantName} (${stage})`,
+    `🌍 ${jc?.setting || "Outdoor"} · ${medium}`,
+    ...(jc?.recentWaterSummary ? [`💧 ${jc.recentWaterSummary}`] : []),
+    ...(jc?.recentFeedsSummary ? [`🧪 ${jc.recentFeedsSummary}`] : []),
+    ...(jc?.trainingSummary ? [`✂️ ${jc.trainingSummary}`] : []),
+  ];
 
   return {
-    summary: `${plantName} is currently in the ${stage} stage (${plantType}). Canopy shows ${
-      green > 0.6 ? "strong foliar vigor" : "moderate growth"
-    }. Optimal focus right now is ${
-      topping.recommended
-        ? "topping and canopy leveling"
-        : "consistent nutrition and gentle LST branch positioning"
+    summary: `${plantName} is in the ${stage} stage growing in ${medium}${isInGround ? " (in the ground)" : ""}.${
+      jc?.trainingSummary ? ` Journal training: ${jc.trainingSummary}.` : ""
+    }${jc?.recentFeedsSummary ? ` ${jc.recentFeedsSummary}.` : ""} Optimal focus right now is ${
+      topping.recommended && !alreadyTopped
+        ? "topping and spreading the branches"
+        : "steady soil moisture and opening the canopy with gentle branch ties"
     }.`,
     cultivationStage: stage,
     topping,
@@ -305,6 +360,7 @@ function evaluateAdviceFromVisualMetrics(payload: AdviceRequestPayload): PlantAd
     nutrients,
     watering,
     keyActionToday,
+    journalContextUsed: journalBadges,
     source: "visual-heuristics",
   };
 }
@@ -318,21 +374,23 @@ export async function handlePlantAdvice(payload: AdviceRequestPayload): Promise<
     stage = "Vegetative",
     medium = "Soil",
     plantType = "Photoperiod",
+    journalContext,
   } = payload;
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env["GEMINI_API_KEY"];
   const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z+]+;base64,/, "").trim();
 
   if (!cleanBase64) {
     throw new Error("No image data provided for plant advice.");
   }
 
-  // Attempt Gemini 3.8 Flash with strict 3.5s timeout for ultra-fast, zero-stall UX
-  if (apiKey) {
+  const isRealPhoto = cleanBase64.length > 250;
+
+  if (apiKey && isRealPhoto) {
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => {
       abortController.abort();
-    }, 3500);
+    }, 9000);
 
     const ai = new GoogleGenAI({
       apiKey,
@@ -340,7 +398,6 @@ export async function handlePlantAdvice(payload: AdviceRequestPayload): Promise<
         headers: {
           "User-Agent": "aistudio-build",
         },
-        signal: abortController.signal,
       },
     });
 
@@ -356,16 +413,20 @@ Current Stage: "${stage}"
 Growing Medium: "${medium}"
 Plant Type: "${plantType}"
 ${plantInfo ? `Grower Notes: ${plantInfo}` : ""}
+${journalContext?.promptBlock ? `\n${journalContext.promptBlock}\n` : ""}
 
-Evaluate THIS specific photo carefully. Tailor all advice specifically to whether the plant is in seedling, veg, or flower, whether it is autoflower or photoperiod, and what the leaves and node spacing look like. Return strict JSON.`;
+CRITICAL JOURNAL LINKING RULES:
+- Tailor all advice directly to this plant's linked journal (whether it is in Living Soil / In the Ground vs a pot, what training like LST/Topping was already logged, and when it was last watered and fed).
+- If the plant is in Living Soil or In the Ground, do NOT tell the gardener to lift a container or use pot rim clips; recommend ground stakes, mulch moisture checks, and organic top-dressing/teas.
+- Return strict JSON.`;
 
     try {
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Gemini advice call timed out after 3.5s")), 3500),
+        setTimeout(() => reject(new Error("Gemini advice call timed out after 9s")), 9000),
       );
 
       const geminiPromise = ai.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: "gemini-3-flash-preview",
         contents: [
           {
             role: "user",
@@ -381,8 +442,9 @@ Evaluate THIS specific photo carefully. Tailor all advice specifically to whethe
           },
         ],
         config: {
+          abortSignal: abortController.signal,
           systemInstruction:
-            "You are GrowBuddy AI Coach. Return thorough, practical, and highly accurate botanical training and feeding advice in strict JSON matching the schema.",
+            "You are GrowBuddy AI Coach. Return thorough, practical, and friendly botanical training and feeding advice tailored to the plant's linked journal in strict JSON matching the schema.",
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -548,7 +610,7 @@ Evaluate THIS specific photo carefully. Tailor all advice specifically to whethe
                   },
                   liftCheckAdvice: {
                     type: Type.STRING,
-                    description: "How to confirm moisture via container weight.",
+                    description: "How to confirm moisture via container weight or soil bed check.",
                   },
                   knuckleTest: {
                     type: Type.STRING,
@@ -587,6 +649,7 @@ Evaluate THIS specific photo carefully. Tailor all advice specifically to whethe
       if (text) {
         const parsed = JSON.parse(text) as PlantAdviceResult;
         parsed.source = "gemini-3.8-flash";
+        parsed.journalContextUsed = journalContext?.journalContextBadges;
         return parsed;
       }
     } catch (err: unknown) {

@@ -1,16 +1,20 @@
-import React, { useState, useEffect } from "react";
-import { fetchForecast, buildAlerts, type Forecast, type Alert } from "@/lib/weather";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
-  CloudSun,
+  fetchForecast,
+  buildAlerts,
+  buildSevenDayForecast,
+  type Forecast,
+  type Alert,
+  type DailyForecastDay,
+} from "@/lib/weather";
+import {
   Wind,
   Droplets,
-  Thermometer,
-  Sun,
   AlertTriangle,
   RefreshCw,
   MapPin,
   Clock,
-  Compass,
+  Calendar,
   CheckCircle,
   PlusCircle,
 } from "lucide-react";
@@ -26,61 +30,152 @@ interface WeatherBlockProps {
 const PRESET_CITIES = [
   { name: "My Current GPS", lat: 0, lon: 0, isGps: true },
   { name: "Auckland, NZ", lat: -36.85, lon: 174.76 },
+  { name: "Northland / Whangārei, NZ", lat: -35.72, lon: 174.32 },
+  { name: "Bay of Plenty / Tauranga, NZ", lat: -37.69, lon: 176.17 },
+  { name: "Hawke's Bay / Napier, NZ", lat: -39.49, lon: 176.91 },
+  { name: "Nelson / Tasman Bay, NZ", lat: -41.27, lon: 173.28 },
+  { name: "Wellington, NZ", lat: -41.29, lon: 174.78 },
+  { name: "Christchurch / Canterbury, NZ", lat: -43.53, lon: 172.64 },
+  { name: "Queenstown / Central Otago, NZ", lat: -45.03, lon: 168.66 },
   { name: "Melbourne, AU", lat: -37.81, lon: 144.96 },
   { name: "Los Angeles, CA", lat: 34.05, lon: -118.24 },
-  { name: "Denver, CO", lat: 39.74, lon: -104.99 },
   { name: "Barcelona, ES", lat: 41.39, lon: 2.17 },
-  { name: "Amsterdam, NL", lat: 52.37, lon: 4.89 },
-  { name: "London, UK", lat: 51.51, lon: -0.13 },
 ];
+
+const WEATHER_CITY_STORAGE_KEY = "canopy-weather-city-v1";
 
 export const WeatherBlock: React.FC<WeatherBlockProps> = ({ onLogWeatherToDiary, plants = [] }) => {
   const [data, setData] = useState<Forecast | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [sevenDay, setSevenDay] = useState<DailyForecastDay[]>([]);
+  const [selectedDayDate, setSelectedDayDate] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [place, setPlace] = useState("Locating…");
+  const [place, setPlace] = useState("Auckland, NZ");
   const [lastUpdated, setLastUpdated] = useState<string>("");
   const [selectedCity, setSelectedCity] = useState<string>("My Current GPS");
   const [loggedNotification, setLoggedNotification] = useState(false);
+  const [canAskNotif, setCanAskNotif] = useState(false);
 
-  const loadWeather = (lat: number, lon: number, label: string) => {
+  const requestSeqRef = useRef(0);
+  const dataRef = useRef<Forecast | null>(null);
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
+
+  useEffect(() => {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      setCanAskNotif(true);
+    }
+  }, []);
+
+  const loadWeather = useCallback((lat: number, lon: number, label: string) => {
+    const seq = ++requestSeqRef.current;
     setLoading(true);
+    setErr("");
     setPlace(label);
     fetchForecast(lat, lon)
       .then((f) => {
+        if (seq !== requestSeqRef.current) return;
+        const daily7 = buildSevenDayForecast(f);
         setData(f);
         setAlerts(buildAlerts(f));
+        setSevenDay(daily7);
+        const firstWarningDay = daily7.find((d) => d.warnings.length > 0);
+        setSelectedDayDate((firstWarningDay ?? daily7[0])?.date ?? null);
         setErr("");
         setLastUpdated(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
       })
-      .catch(() => setErr("Weather updates unavailable. Retrying shortly."))
-      .finally(() => setLoading(false));
-  };
+      .catch(() => {
+        if (seq !== requestSeqRef.current) return;
+        setErr("Could not reach the weather service. Check your connection and try again.");
+      })
+      .finally(() => {
+        if (seq === requestSeqRef.current) {
+          setLoading(false);
+        }
+      });
+  }, []);
 
-  const loadByGps = () => {
-    if (!navigator.geolocation) {
-      loadWeather(-36.85, 174.76, "Auckland (default)");
+  const loadByGps = useCallback(() => {
+    // Load Auckland immediately so the user never gets stuck waiting on a stalled GPS prompt
+    if (!dataRef.current) {
+      loadWeather(-36.85, 174.76, "Auckland, NZ (checking GPS…)");
+    }
+
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      loadWeather(-36.85, 174.76, "Auckland, NZ (default)");
       return;
     }
-    navigator.geolocation.getCurrentPosition(
-      (p) => {
-        loadWeather(p.coords.latitude, p.coords.longitude, "Your Garden Location");
-      },
-      () => {
-        loadWeather(-36.85, 174.76, "Auckland (default)");
-      },
-      { timeout: 8000 },
-    );
-  };
+
+    let settled = false;
+    const gpsGuard = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (dataRef.current) {
+        setPlace("Auckland, NZ (default)");
+      } else {
+        loadWeather(-36.85, 174.76, "Auckland, NZ (default)");
+      }
+    }, 4500);
+
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (p) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(gpsGuard);
+          loadWeather(p.coords.latitude, p.coords.longitude, "Your Garden Location");
+        },
+        () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(gpsGuard);
+          if (dataRef.current) {
+            setPlace("Auckland, NZ (default)");
+          } else {
+            loadWeather(-36.85, 174.76, "Auckland, NZ (default)");
+          }
+        },
+        { timeout: 4500, maximumAge: 300000 },
+      );
+    } catch {
+      if (!settled) {
+        settled = true;
+        clearTimeout(gpsGuard);
+        loadWeather(-36.85, 174.76, "Auckland, NZ (default)");
+      }
+    }
+  }, [loadWeather]);
 
   useEffect(() => {
-    loadByGps();
-  }, []);
+    let savedCity = "My Current GPS";
+    try {
+      const stored = localStorage.getItem(WEATHER_CITY_STORAGE_KEY);
+      if (stored && PRESET_CITIES.some((c) => c.name === stored)) {
+        savedCity = stored;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    setSelectedCity(savedCity);
+    const found = PRESET_CITIES.find((c) => c.name === savedCity);
+    if (found && !found.isGps) {
+      loadWeather(found.lat, found.lon, found.name);
+    } else {
+      loadByGps();
+    }
+  }, [loadByGps, loadWeather]);
 
   const handleCitySelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const cityName = e.target.value;
     setSelectedCity(cityName);
+    try {
+      localStorage.setItem(WEATHER_CITY_STORAGE_KEY, cityName);
+    } catch {
+      // ignore
+    }
     const found = PRESET_CITIES.find((c) => c.name === cityName);
     if (!found) return;
 
@@ -122,6 +217,29 @@ export const WeatherBlock: React.FC<WeatherBlockProps> = ({ onLogWeatherToDiary,
     warning: "bg-warning",
     info: "bg-info",
   };
+
+  const startHourIdx = useMemo(() => {
+    if (!data?.hourly?.time?.length) return 0;
+    const nowMs = Date.now();
+    const idx = data.hourly.time.findIndex((t) => {
+      const ms = new Date(t).getTime();
+      return !Number.isNaN(ms) && ms >= nowMs - 3600 * 1000;
+    });
+    if (idx >= 0 && idx + 24 <= data.hourly.time.length) {
+      return idx;
+    }
+    return 0;
+  }, [data]);
+
+  const activeDay = useMemo(() => {
+    if (sevenDay.length === 0) return null;
+    return (
+      sevenDay.find((d) => d.date === selectedDayDate) ??
+      sevenDay.find((d) => d.warnings.length > 0) ??
+      sevenDay[0] ??
+      null
+    );
+  }, [sevenDay, selectedDayDate]);
 
   // Grow climate indicators
   const tempVal = data ? Math.round(data.current.temperature_2m) : null;
@@ -167,11 +285,11 @@ export const WeatherBlock: React.FC<WeatherBlockProps> = ({ onLogWeatherToDiary,
       </div>
 
       {/* Main Conditions Card */}
-      <section className="rounded-2xl border border-border bg-card p-5 relative overflow-hidden shadow-sm">
+      <section className="rounded-2xl border border-primary/25 bg-card nz-summer-banner p-5 relative overflow-hidden shadow-sm">
         <div className="flex items-start justify-between">
           <div>
-            <span className="text-xs font-medium text-primary uppercase tracking-widest">
-              Live Weather Block
+            <span className="text-xs font-semibold text-primary">
+              ☀️ Aotearoa Summer Microclimate
             </span>
             <p className="text-sm font-semibold text-foreground mt-0.5">{place}</p>
           </div>
@@ -185,6 +303,23 @@ export const WeatherBlock: React.FC<WeatherBlockProps> = ({ onLogWeatherToDiary,
             </button>
           )}
         </div>
+
+        {err && (
+          <div
+            role="alert"
+            className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          >
+            <span>{err}</span>
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={loading}
+              className="rounded-lg bg-destructive px-2.5 py-1 text-[11px] font-semibold text-destructive-foreground hover:opacity-90 transition cursor-pointer"
+            >
+              {loading ? "Retrying…" : "Retry"}
+            </button>
+          </div>
+        )}
 
         {data ? (
           <div className="mt-4 flex items-end justify-between">
@@ -206,7 +341,7 @@ export const WeatherBlock: React.FC<WeatherBlockProps> = ({ onLogWeatherToDiary,
             </div>
           </div>
         ) : (
-          <p className="mt-3 text-sm text-muted-foreground">{err || "Loading weather update…"}</p>
+          !err && <p className="mt-3 text-sm text-muted-foreground">Loading weather update…</p>
         )}
 
         {/* Cultivation Environment Quick Check */}
@@ -252,7 +387,8 @@ export const WeatherBlock: React.FC<WeatherBlockProps> = ({ onLogWeatherToDiary,
           </div>
 
           <div className="flex gap-2 overflow-x-auto pb-2 pt-1 scrollbar-thin">
-            {data.hourly.time.slice(0, 24).map((timeStr, i) => {
+            {data.hourly.time.slice(startHourIdx, startHourIdx + 24).map((timeStr, offset) => {
+              const i = startHourIdx + offset;
               const hourLabel = new Date(timeStr).toLocaleTimeString([], {
                 hour: "numeric",
               });
@@ -285,6 +421,146 @@ export const WeatherBlock: React.FC<WeatherBlockProps> = ({ onLogWeatherToDiary,
         </section>
       )}
 
+      {/* 7-Day Forecast Block with Predicted Daily Weather Warnings */}
+      {data && sevenDay.length > 0 && (
+        <section className="space-y-2.5">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+              <Calendar className="h-4 w-4 text-primary" />
+              <span>Next 7 Days & Daily Warnings</span>
+            </h3>
+            <span className="text-xs text-muted-foreground">Swipe →</span>
+          </div>
+
+          <div className="flex gap-2.5 overflow-x-auto pb-2 pt-1 scrollbar-thin">
+            {sevenDay.map((day) => {
+              const isSelected = activeDay?.date === day.date;
+              const hasDanger = day.warnings.some((w) => w.severity === "danger");
+              const hasWarning = day.warnings.some((w) => w.severity === "warning");
+
+              return (
+                <button
+                  key={day.date}
+                  type="button"
+                  onClick={() => setSelectedDayDate(day.date)}
+                  className={`flex min-w-[148px] max-w-[168px] shrink-0 flex-col justify-between rounded-2xl border p-3 text-left shadow-xs transition cursor-pointer ${
+                    isSelected
+                      ? "border-primary bg-primary/10 ring-1 ring-primary/40"
+                      : hasDanger
+                        ? "border-destructive/50 bg-card hover:border-destructive"
+                        : hasWarning
+                          ? "border-warning/40 bg-card hover:border-warning"
+                          : "border-border bg-card hover:bg-secondary/40"
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-xs font-bold text-foreground">{day.dayLabel}</span>
+                      <span className="text-[10px] text-muted-foreground">{day.shortDate}</span>
+                    </div>
+
+                    <div className="my-2 flex items-baseline gap-1.5">
+                      <span className="text-lg font-bold text-foreground">{day.tempMax}°</span>
+                      <span className="text-xs font-medium text-muted-foreground">
+                        / {day.tempMin}°C
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-muted-foreground border-t border-border/60 pt-2">
+                      <span className="text-info flex items-center gap-1">
+                        <Droplets className="h-2.5 w-2.5 shrink-0" />
+                        <span>{day.maxHumidity}% RH</span>
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Wind className="h-2.5 w-2.5 shrink-0 text-primary" />
+                        <span>{day.maxWindGusts}km/h</span>
+                      </span>
+                      <span
+                        className={`col-span-2 ${
+                          day.precipitationMm > 0
+                            ? "text-primary font-semibold"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {day.precipitationMm > 0 ? `${day.precipitationMm} mm rain` : "0 mm rain"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Predicted Weather Warnings for this Day */}
+                  <div className="mt-2.5 border-t border-border/60 pt-2 space-y-1">
+                    {day.warnings.length > 0 ? (
+                      day.warnings.map((w) => (
+                        <div
+                          key={w.id}
+                          className={`flex items-center gap-1.5 rounded-lg border px-1.5 py-1 text-[10px] font-semibold leading-tight ${tone[w.severity]}`}
+                        >
+                          <span
+                            className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot[w.severity]}`}
+                          />
+                          <span className="truncate">{w.shortLabel}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="flex items-center gap-1 text-[10px] font-medium text-primary">
+                        <CheckCircle className="h-3 w-3 shrink-0" />
+                        <span>No warnings</span>
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Selected Day Warning Detail Panel */}
+          {activeDay && (
+            <div className="rounded-2xl border border-border bg-card p-3.5 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-foreground">
+                  {activeDay.dayLabel} ({activeDay.shortDate}) — Predicted Warnings (
+                  {activeDay.warnings.length})
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  {activeDay.tempMax}° / {activeDay.tempMin}°C · {activeDay.precipitationMm}mm ·
+                  Peak RH {activeDay.maxHumidity}%
+                </div>
+              </div>
+
+              {activeDay.warnings.length > 0 ? (
+                <div className="space-y-1.5">
+                  {activeDay.warnings.map((w) => (
+                    <div
+                      key={w.id}
+                      className={`rounded-xl border px-3 py-2 text-xs ${tone[w.severity]}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold flex items-center gap-1.5">
+                          <span className={`h-2 w-2 rounded-full ${dot[w.severity]}`} />
+                          <span>{w.title}</span>
+                        </span>
+                        <span className="text-[11px] opacity-90">{w.shortLabel}</span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-muted-foreground leading-relaxed">
+                        {w.detail}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs text-foreground">
+                  <CheckCircle className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span>
+                    Clear growing conditions predicted for {activeDay.dayLabel.toLowerCase()} — no
+                    frost, heat, wind, heavy rain, or mould warnings.
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Automated Weather Push Notifications & Threshold Monitor */}
       <WeatherAlertsManager forecast={data} plants={plants} />
 
@@ -295,9 +571,13 @@ export const WeatherBlock: React.FC<WeatherBlockProps> = ({ onLogWeatherToDiary,
             <AlertTriangle className="h-4 w-4 text-primary" />
             <span>Grower Weather Alerts (48h)</span>
           </h3>
-          {typeof Notification !== "undefined" && Notification.permission === "default" && (
+          {canAskNotif && (
             <button
-              onClick={() => Notification.requestPermission()}
+              onClick={() => {
+                Notification.requestPermission().then((perm) => {
+                  if (perm !== "default") setCanAskNotif(false);
+                });
+              }}
               className="text-xs font-semibold text-primary hover:underline"
             >
               Enable Notifications
@@ -327,28 +607,6 @@ export const WeatherBlock: React.FC<WeatherBlockProps> = ({ onLogWeatherToDiary,
           ))}
         </div>
       </section>
-
-      {/* 3-Day Forecast Summary */}
-      {data && (
-        <section className="grid grid-cols-3 gap-2.5">
-          {data.daily.time.map((d, i) => (
-            <div key={d} className="rounded-2xl border border-border bg-card p-3 text-center">
-              <div className="text-xs font-semibold text-muted-foreground">
-                {new Date(d).toLocaleDateString(undefined, { weekday: "short" })}
-              </div>
-              <div className="mt-1 font-bold text-sm text-foreground">
-                {Math.round(data.daily.temperature_2m_max[i] ?? 0)}° /{" "}
-                <span className="text-muted-foreground">
-                  {Math.round(data.daily.temperature_2m_min[i] ?? 0)}°
-                </span>
-              </div>
-              <div className="mt-1 text-xs text-info font-medium">
-                {data.daily.precipitation_sum[i]} mm rain
-              </div>
-            </div>
-          ))}
-        </section>
-      )}
     </div>
   );
 };

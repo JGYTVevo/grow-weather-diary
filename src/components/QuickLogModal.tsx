@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from "react";
 import type { Plant, Log, LogType } from "@/hooks/use-plants";
 import {
+  DILUTION_RATIO_PRESETS,
+  RAW_DOSAGE_PRESETS,
+  type FertilizerForm,
+  type HomemadeFertilizer,
+} from "@/hooks/use-fertilizers";
+import {
   X,
   Droplets,
   FlaskConical,
@@ -12,12 +18,15 @@ import {
   Check,
   Sprout,
   CheckCircle2,
+  Loader2,
 } from "lucide-react";
+import { compressImage, formatDataUrlSize } from "@/lib/photo-utils";
 
 interface QuickLogModalProps {
   isOpen: boolean;
   onClose: () => void;
   plants: Plant[];
+  fertilizers?: HomemadeFertilizer[];
   defaultPlantId?: string | null;
   onSaveLog: (plantIds: string[], logData: Omit<Log, "id">) => Promise<void>;
 }
@@ -66,46 +75,11 @@ const TRAINING_PRESETS = [
   "Lollipopping",
 ];
 
-function compressPhoto(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read image"));
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onerror = () => reject(new Error("Failed to load image"));
-      img.onload = () => {
-        const MAX_DIM = 960;
-        let { width, height } = img;
-        if (width > MAX_DIM || height > MAX_DIM) {
-          if (width > height) {
-            height = Math.round((height * MAX_DIM) / width);
-            width = MAX_DIM;
-          } else {
-            width = Math.round((width * MAX_DIM) / height);
-            height = MAX_DIM;
-          }
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve(e.target?.result as string);
-          return;
-        }
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", 0.8));
-      };
-      img.src = e.target?.result as string;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
 export function QuickLogModal({
   isOpen,
   onClose,
   plants,
+  fertilizers = [],
   defaultPlantId,
   onSaveLog,
 }: QuickLogModalProps) {
@@ -119,12 +93,16 @@ export function QuickLogModal({
   const [statusPreset, setStatusPreset] = useState<string>("");
   const [waterAmount, setWaterAmount] = useState<string>("1.0L");
   const [waterPh, setWaterPh] = useState<string>("6.3");
+  const [selectedFertilizerId, setSelectedFertilizerId] = useState<string>("");
   const [feedType, setFeedType] = useState<string>("Standard Bloom");
+  const [feedForm, setFeedForm] = useState<FertilizerForm>("Diluted");
+  const [feedDilution, setFeedDilution] = useState<string>("1:500 (2 ml/L)");
   const [feedEc, setFeedEc] = useState<string>("1.4");
   const [trainingType, setTrainingType] = useState<string>("LST Branch Ties");
   const [heightCm, setHeightCm] = useState<string>("");
   const [customNote, setCustomNote] = useState<string>("");
   const [photo, setPhoto] = useState<string | null>(null);
+  const [isCompressingPhoto, setIsCompressingPhoto] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -181,7 +159,7 @@ export function QuickLogModal({
         ph = waterPh;
         ec = feedEc ? `${feedEc} mS/cm` : undefined;
         if (!noteContent)
-          noteContent = `Fed ${feedType} · ${waterAmount} (pH ${waterPh}, EC ${feedEc || "1.4"})`;
+          noteContent = `Fed ${feedType} [${feedForm}${feedDilution ? ` · ${feedDilution}` : ""}] · ${waterAmount} (pH ${waterPh}, EC ${feedEc || "1.4"})`;
       } else if (category === "training") {
         logType = "training";
         technique = trainingType;
@@ -212,6 +190,11 @@ export function QuickLogModal({
       if (amount) payload.amount = amount;
       if (ph) payload.ph = ph;
       if (ec) payload.ec = ec;
+      if (category === "feed") {
+        payload.nutrients = feedType;
+        payload.fertilizerForm = feedForm;
+        if (feedDilution.trim()) payload.dilutionRatio = feedDilution.trim();
+      }
       if (technique) payload.technique = technique;
       if (height) payload.height = height;
 
@@ -431,15 +414,60 @@ export function QuickLogModal({
           {category === "feed" && (
             <div className="space-y-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3.5">
               <div>
+                <label
+                  htmlFor="quicklog-fertilizer-select"
+                  className="font-semibold text-muted-foreground uppercase tracking-wider text-[11px] flex items-center justify-between mb-1.5"
+                >
+                  <span>Choose from Fertilizer Journal</span>
+                  <span className="text-[10px] font-normal lowercase">
+                    {fertilizers.length} saved
+                  </span>
+                </label>
+                <select
+                  id="quicklog-fertilizer-select"
+                  aria-label="Choose from Fertilizer Journal"
+                  value={selectedFertilizerId}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSelectedFertilizerId(val);
+                    if (!val) return;
+                    const found = fertilizers.find((f) => f.id === val);
+                    if (found) {
+                      setFeedType(`${found.name} (${found.fertilizerType})`);
+                      setFeedForm(found.form);
+                      setFeedDilution(
+                        found.dilutionRatio ||
+                          (found.form === "Raw" ? "Straight drench (undiluted)" : "1:10 (100ml/L)"),
+                      );
+                    }
+                  }}
+                  className="w-full rounded-lg border border-border bg-secondary px-2.5 py-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring cursor-pointer mb-2.5"
+                >
+                  <option value="" className="bg-card text-foreground">
+                    {fertilizers.length > 0
+                      ? `-- Select a fertilizer from your Fertilizer Journal (${fertilizers.length}) --`
+                      : "-- No fertilizers in Fertilizer Journal yet (use preset or custom below) --"}
+                  </option>
+                  {fertilizers.map((f) => (
+                    <option key={f.id} value={f.id} className="bg-card text-foreground">
+                      {f.name} — {f.form}
+                      {f.dilutionRatio ? ` (${f.dilutionRatio})` : ""} · {f.fertilizerType}
+                    </option>
+                  ))}
+                </select>
+
                 <span className="font-semibold text-muted-foreground uppercase tracking-wider text-[11px] block mb-1.5">
-                  Formula Type
+                  Formula / Homemade Fertilizer Type
                 </span>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-1.5 mb-2">
                   {FEED_TYPES.map((ft) => (
                     <button
                       key={ft}
                       type="button"
-                      onClick={() => setFeedType(ft)}
+                      onClick={() => {
+                        setSelectedFertilizerId("");
+                        setFeedType(ft);
+                      }}
                       className={`px-2.5 py-1 rounded-lg text-xs font-medium transition ${
                         feedType === ft
                           ? "bg-emerald-600 text-white font-semibold"
@@ -449,6 +477,76 @@ export function QuickLogModal({
                       {ft}
                     </button>
                   ))}
+                </div>
+                <input
+                  type="text"
+                  value={feedType}
+                  onChange={(e) => {
+                    const nextVal = e.target.value;
+                    setFeedType(nextVal);
+                    const matched = fertilizers.find(
+                      (f) => `${f.name} (${f.fertilizerType})` === nextVal,
+                    );
+                    setSelectedFertilizerId(matched ? matched.id : "");
+                  }}
+                  placeholder="Or type custom homemade fertilizer (e.g. Banana Peel FPJ)"
+                  className="w-full rounded-lg border border-border bg-secondary px-2.5 py-1.5 text-xs text-foreground outline-none"
+                />
+              </div>
+
+              <div>
+                <span className="font-semibold text-muted-foreground uppercase tracking-wider text-[11px] block mb-1.5">
+                  Fertilizer Form (Raw vs. Diluted)
+                </span>
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  {(["Raw", "Diluted"] as FertilizerForm[]).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => {
+                        setFeedForm(option);
+                        setFeedDilution(option === "Raw" ? "Undiluted (Raw)" : "1:500 (2 ml/L)");
+                      }}
+                      className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                        feedForm === option
+                          ? option === "Raw"
+                            ? "border-amber-500 bg-amber-500/20 text-amber-300"
+                            : "border-sky-500 bg-sky-500/20 text-sky-300"
+                          : "border-border bg-secondary text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {option === "Raw" ? "Raw (Undiluted)" : "Diluted (Mixed)"}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="text"
+                  value={feedDilution}
+                  onChange={(e) => setFeedDilution(e.target.value)}
+                  placeholder={
+                    feedForm === "Diluted"
+                      ? "Dilution ratio (e.g. 1:500 or 2 ml/L)"
+                      : "Raw dose (e.g. Undiluted top-dress)"
+                  }
+                  className="w-full rounded-lg border border-border bg-secondary px-2.5 py-1.5 text-xs text-foreground outline-none mb-1.5"
+                />
+                <div className="flex flex-wrap gap-1">
+                  {(feedForm === "Diluted" ? DILUTION_RATIO_PRESETS : RAW_DOSAGE_PRESETS).map(
+                    (preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setFeedDilution(preset)}
+                        className={`rounded-md border px-2 py-0.5 text-[10px] font-medium transition ${
+                          feedDilution === preset
+                            ? "border-emerald-500 bg-emerald-500/20 text-emerald-300"
+                            : "border-border bg-secondary text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ),
+                  )}
                 </div>
               </div>
 
@@ -530,54 +628,107 @@ export function QuickLogModal({
           </div>
 
           {/* Photo Snap or Upload */}
-          <div className="flex items-center gap-2">
-            {photo ? (
-              <div className="relative inline-block">
-                <img
-                  src={photo}
-                  alt="Snapshot"
-                  className="h-14 w-14 rounded-xl object-cover border border-primary"
-                />
-                <button
-                  type="button"
-                  onClick={() => setPhoto(null)}
-                  className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-destructive-foreground text-[10px]"
-                >
-                  ✕
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 w-full">
-                <label className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 cursor-pointer active:scale-95 transition">
-                  <Camera className="h-3.5 w-3.5" />
-                  <span>📷 Camera</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="sr-only"
-                    onChange={async (e) => {
-                      const f = e.target.files?.[0];
-                      if (f) setPhoto(await compressPhoto(f));
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
+          {/* Photo Snap or Upload */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-muted-foreground uppercase tracking-wider text-[11px]">
+                Photo Snapshot (Optional)
+              </span>
+              {photo && (
+                <span className="text-[10px] font-mono text-primary font-medium">
+                  {formatDataUrlSize(photo)}
+                </span>
+              )}
+            </div>
 
-                <label className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-secondary px-3 py-2 text-xs font-medium text-foreground hover:bg-secondary/80 cursor-pointer active:scale-95 transition">
-                  <Upload className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span>📁 Gallery</span>
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/heic,image/gif"
-                    className="sr-only"
-                    onChange={async (e) => {
-                      const f = e.target.files?.[0];
-                      if (f) setPhoto(await compressPhoto(f));
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
+            {isCompressingPhoto && (
+              <div className="flex items-center gap-2 p-2.5 rounded-xl border border-primary/30 bg-primary/10 text-xs text-primary animate-pulse">
+                <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                <span>Optimizing photo...</span>
+              </div>
+            )}
+
+            {!isCompressingPhoto && (
+              <div className="flex items-center gap-2">
+                {photo ? (
+                  <div className="relative inline-flex items-center gap-3">
+                    <img
+                      src={photo}
+                      alt="Snapshot"
+                      className="h-14 w-14 rounded-xl object-cover border-2 border-primary shadow-xs"
+                    />
+                    <div className="flex flex-col gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setPhoto(null)}
+                        className="rounded-lg bg-destructive/15 text-destructive px-2 py-1 text-[11px] font-medium hover:bg-destructive/25 transition active:scale-95 text-left"
+                      >
+                        ✕ Remove photo
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 w-full">
+                    <label className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 cursor-pointer active:scale-95 transition">
+                      <Camera className="h-3.5 w-3.5" />
+                      <span>📷 Camera</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="sr-only"
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          if (f) {
+                            setIsCompressingPhoto(true);
+                            try {
+                              const compressed = await compressImage(f, {
+                                maxDimension: 512,
+                                quality: 0.6,
+                                maxBase64Length: 65000,
+                              });
+                              if (compressed) setPhoto(compressed);
+                            } catch (err) {
+                              console.error("Photo error:", err);
+                            } finally {
+                              setIsCompressingPhoto(false);
+                            }
+                          }
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+
+                    <label className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-secondary px-3 py-2 text-xs font-medium text-foreground hover:bg-secondary/80 cursor-pointer active:scale-95 transition">
+                      <Upload className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span>📁 Gallery</span>
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/heic,image/gif"
+                        className="sr-only"
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          if (f) {
+                            setIsCompressingPhoto(true);
+                            try {
+                              const compressed = await compressImage(f, {
+                                maxDimension: 512,
+                                quality: 0.6,
+                                maxBase64Length: 65000,
+                              });
+                              if (compressed) setPhoto(compressed);
+                            } catch (err) {
+                              console.error("Photo error:", err);
+                            } finally {
+                              setIsCompressingPhoto(false);
+                            }
+                          }
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -595,7 +746,7 @@ export function QuickLogModal({
 
           <button
             type="button"
-            disabled={saving || selectedPlantIds.length === 0}
+            disabled={saving || isCompressingPhoto || selectedPlantIds.length === 0}
             onClick={handleSave}
             className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-xs font-bold text-primary-foreground shadow-md transition active:scale-95 ${
               savedSuccess ? "bg-emerald-600" : "bg-primary hover:bg-primary/90 disabled:opacity-50"

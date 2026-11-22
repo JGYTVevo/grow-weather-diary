@@ -5,6 +5,7 @@ import {
   type CanopyMetrics,
 } from "@/lib/defoliation";
 import type { Plant } from "@/hooks/use-plants";
+import { buildPlantJournalSummary } from "@/lib/journal-context";
 import {
   Scissors,
   Camera,
@@ -204,7 +205,9 @@ export function DefoliationAnalyzer({
   const [result, setResult] = useState<DefoliationResult | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [overlayMode, setOverlayMode] = useState<"clean" | "zones">("zones");
-  const [selectedPlantId, setSelectedPlantId] = useState<string>(initialSelectedPlantId || "");
+  const [selectedPlantId, setSelectedPlantId] = useState<string>(
+    initialSelectedPlantId || (plants[0]?.id ?? ""),
+  );
   const [stageContext, setStageContext] = useState<string>("Day 1 Flower");
   const [plantTypeContext, setPlantTypeContext] = useState<string>("Photoperiod");
   const [notes, setNotes] = useState<string>("");
@@ -215,6 +218,9 @@ export function DefoliationAnalyzer({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  const currentPlant = plants.find((p) => p.id === selectedPlantId);
+  const journalSummary = buildPlantJournalSummary(currentPlant);
 
   // Sync with selected plant
   useEffect(() => {
@@ -286,12 +292,16 @@ export function DefoliationAnalyzer({
       setMetrics(extractedMetrics);
 
       const matchedPlant = plants.find((p) => p.id === selectedPlantId);
+      const summary = buildPlantJournalSummary(matchedPlant);
       const adviceResult = await analyzeDefoliationCanopy({
         imageBase64: dataUrl,
         plantName: matchedPlant?.name || "Canopy",
         stage: stageContext,
+        medium: summary?.medium || matchedPlant?.medium || "Soil",
         plantType: plantTypeContext,
-        growerNotes: notes,
+        growerNotes: [notes, summary?.trainingSummary, summary?.recentFeedsSummary]
+          .filter(Boolean)
+          .join(" | "),
         metrics: extractedMetrics,
       });
 
@@ -322,12 +332,16 @@ export function DefoliationAnalyzer({
     setLoading(true);
     try {
       const matchedPlant = plants.find((p) => p.id === selectedPlantId);
+      const summary = buildPlantJournalSummary(matchedPlant);
       const adviceResult = await analyzeDefoliationCanopy({
         imageBase64: photo,
         plantName: matchedPlant?.name || "Canopy",
         stage: stageContext,
+        medium: summary?.medium || matchedPlant?.medium || "Soil",
         plantType: plantTypeContext,
-        growerNotes: notes,
+        growerNotes: [notes, summary?.trainingSummary, summary?.recentFeedsSummary]
+          .filter(Boolean)
+          .join(" | "),
         metrics: metrics || undefined,
       });
       setResult(adviceResult);
@@ -359,7 +373,6 @@ export function DefoliationAnalyzer({
     }
   };
 
-  const currentPlant = plants.find((p) => p.id === selectedPlantId);
   const progressInfo = getCanopyProgressStage(elapsedSeconds);
 
   return (
@@ -406,7 +419,7 @@ export function DefoliationAnalyzer({
               <option value="">(Select plant from diary)</option>
               {plants.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name} ({p.stage} · {p.strain || "Unknown"})
+                  {p.name} ({p.stage} · {p.medium || "Soil"})
                 </option>
               ))}
             </select>
@@ -444,6 +457,22 @@ export function DefoliationAnalyzer({
             </select>
           </div>
         </div>
+
+        {journalSummary && (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5 pt-2.5 border-t border-border/50">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 mr-1">
+              Synced Journal:
+            </span>
+            {journalSummary.journalContextBadges.map((b, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[11px] font-medium text-foreground"
+              >
+                {b}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* History Drawer */}

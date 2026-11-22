@@ -170,6 +170,64 @@
         }
       },
       "required": ["id", "userId", "condition", "analysis", "createdAt"]
+    },
+    "Fertilizer": {
+      "title": "Fertilizer",
+      "description": "A homemade or custom fertilizer recipe and application profile.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique fertilizer identifier.",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user ID.",
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the homemade fertilizer.",
+          "maxLength": 128
+        },
+        "fertilizerType": {
+          "type": "string",
+          "description": "Category or type of homemade fertilizer.",
+          "maxLength": 128
+        },
+        "form": {
+          "type": "string",
+          "description": "Whether the fertilizer is Raw or Diluted.",
+          "enum": ["Raw", "Diluted"]
+        },
+        "dilutionRatio": {
+          "type": "string",
+          "description": "Dilution ratio or raw application dosage.",
+          "maxLength": 128
+        },
+        "ingredients": {
+          "type": "string",
+          "description": "Ingredients and preparation recipe.",
+          "maxLength": 1024
+        },
+        "targetStage": {
+          "type": "string",
+          "description": "Recommended plant growth stage.",
+          "maxLength": 64
+        },
+        "notes": {
+          "type": "string",
+          "description": "Usage notes or observations.",
+          "maxLength": 1024
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO date or timestamp when created.",
+          "maxLength": 64
+        }
+      },
+      "required": ["id", "userId", "name", "fertilizerType", "form", "createdAt"]
     }
   },
   "firestore": {
@@ -190,6 +248,12 @@
         "$ref": "PlantScan"
       },
       "description": "Subcollection of AI diagnostic scans belonging to a user."
+    },
+    "/users/{userId}/fertilizers/{fertilizerId}": {
+      "schema": {
+        "$ref": "Fertilizer"
+      },
+      "description": "Subcollection of homemade fertilizers belonging to a user."
     }
   }
 }

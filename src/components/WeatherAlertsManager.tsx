@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import type { Plant } from "@/hooks/use-plants";
 import type { Forecast } from "@/lib/weather";
 import {
+  DEFAULT_THRESHOLDS,
   loadThresholdSettings,
   saveThresholdSettings,
   getNotificationPermission,
@@ -36,16 +37,15 @@ interface WeatherAlertsManagerProps {
 }
 
 export function WeatherAlertsManager({ forecast, plants }: WeatherAlertsManagerProps) {
-  const [settings, setSettings] = useState<WeatherThresholdSettings>(loadThresholdSettings);
-  const [permission, setPermission] = useState<NotificationPermission>(getNotificationPermission);
+  const [settings, setSettings] = useState<WeatherThresholdSettings>(DEFAULT_THRESHOLDS);
+  const [permission, setPermission] = useState<NotificationPermission>("default");
   const [showSettings, setShowSettings] = useState(false);
   const [testSending, setTestSending] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{
     text: string;
     type: "success" | "error";
   } | null>(null);
-  const [dispatchedAlerts, setDispatchedAlerts] =
-    useState<WeatherDispatchedNotification[]>(loadDispatchedAlerts);
+  const [dispatchedAlerts, setDispatchedAlerts] = useState<WeatherDispatchedNotification[]>([]);
 
   // Sync settings when loaded
   useEffect(() => {
